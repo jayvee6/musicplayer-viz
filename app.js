@@ -204,16 +204,13 @@ function renderEmojiWaves() {
   }
 }
 
-// ── Mode 2: Emoji Tunnel Vortex ───────────────────────────────────────────
+// ── Mode 2: Emoji Spiral Vortex ───────────────────────────────────────────
+// 12 arms radiating from a center hole, each arm = one emoji type.
+// Polar layout: finalAngle = baseAngle + r * twistFactor + rotation
+// creates curved pinwheel arms. Bass pumps size + twist tightness.
 
-const GOLDEN_ANGLE  = 2.39996323;
-const TUNNEL_COUNT  = 160;        // reduced for smooth perf
-const FOCAL         = 320;
-const Z_FAR         = 650;
-const Z_NEAR        = 28;
-let coneSlope = 0.068;
 // Pre-render each emoji once at CACHE_SIZE px → reuse with drawImage (fast)
-const CACHE_SIZE    = 80;
+const CACHE_SIZE = 80;
 
 const emojiCache = (() => {
   const map = {};
@@ -230,45 +227,51 @@ const emojiCache = (() => {
   return map;
 })();
 
-// Phyllotaxis: place PHYLLO_COUNT emojis at golden-angle increments.
-// r = phylloSpread * sqrt(i) naturally produces Fibonacci spiral arms.
-
 let tunnelRot    = 0;
-let phylloSpread = 18;   // controls tightness; higher = more spread out
-let phylloZoom   = 1.0;  // zoom multiplier; >1 zooms in, <1 zooms out
-const PHYLLO_COUNT = 280;
+let phylloSpread = 18;   // Spread slider → twist tightness (higher = tighter spiral)
+let phylloZoom   = 1.0;  // Z slider → overall scale (0.2–3.0; slider divides by 100)
+
+const VORTEX_ARMS  = 12;
+const VORTEX_STEPS = 13; // emojis per arm
 
 function renderEmojiVortex() {
   ctx.clearRect(0, 0, canvas2d.width, canvas2d.height);
   const W  = canvas2d.width,  H = canvas2d.height;
   const cx = W / 2,           cy = H / 2;
-  const scl = (Math.min(W, H) / 600) * phylloZoom;
 
-  tunnelRot += 0.003 + mid * 0.012;
+  // Slow continuous rotation; mid adds shimmer
+  tunnelRot += 0.004 + mid * 0.008;
 
-  // Compute how many emojis are needed to reach the screen corners
-  const cornerR  = Math.sqrt(cx * cx + cy * cy);
-  const count    = Math.min(2000, Math.ceil((cornerR / (phylloSpread * scl)) ** 2) + 30);
+  const shortSide = Math.min(W, H);
+  const minR      = shortSide * 0.08;                               // empty center hole
+  const maxR      = Math.sqrt(cx * cx + cy * cy) * 0.82 * phylloZoom;
 
-  // Render outer → inner so small center emojis layer on top
-  for (let i = count - 1; i >= 0; i--) {
-    const angle = i * GOLDEN_ANGLE + tunnelRot;
-    const r     = phylloSpread * Math.sqrt(i) * scl;
-    const x     = cx + r * Math.cos(angle);
-    const y     = cy + r * Math.sin(angle);
+  // Spread (4–40, default 18) → radians of twist per pixel of radius
+  // Default: 18 × 0.00025 = 0.0045 rad/px → ~70° total curve at default maxR
+  const baseTwist    = phylloSpread * 0.00025;
+  const dynamicTwist = baseTwist * (1 + bass * 0.9); // bass tightens spiral on beat
 
-    const size  = (5 + Math.sqrt(i) * 6.5) * scl * (1 + bass * 0.5);
+  // Render outer→inner so small center emojis draw on top of large outer ones
+  for (let arm = 0; arm < VORTEX_ARMS; arm++) {
+    const baseAngle = arm * (Math.PI * 2 / VORTEX_ARMS);
+    const img       = emojiCache[EMOJIS[arm % EMOJIS.length]];
 
-    // Fade only near screen edges (rectangular, covers all four sides)
-    const edgeDist = Math.min(x, W - x, y, H - y);
-    const alpha    = Math.min(1, Math.max(0, edgeDist / (size * 0.6)));
+    for (let step = VORTEX_STEPS - 1; step >= 0; step--) {
+      const t = step / (VORTEX_STEPS - 1);   // 0 = center, 1 = outer edge
+      const r = minR + (maxR - minR) * t;
 
-    if (size < 2 || alpha < 0.02) continue;
+      // twist accumulates with radius → curved pinwheel
+      const finalAngle = baseAngle + r * dynamicTwist + tunnelRot;
+      const x = cx + r * Math.cos(finalAngle);
+      const y = cy + r * Math.sin(finalAngle);
 
-    const img  = emojiCache[EMOJIS[i % EMOJIS.length]];
-    const half = size / 2;
-    ctx.globalAlpha = alpha;
-    ctx.drawImage(img, x - half, y - half, size, size);
+      // Emojis scale from small (center) to large (edge)
+      const size = shortSide * (0.03 + t * 0.11) * (1 + bass * 0.35);
+      const half = size / 2;
+
+      ctx.globalAlpha = 0.35 + t * 0.65;
+      ctx.drawImage(img, x - half, y - half, size, size);
+    }
   }
   ctx.globalAlpha = 1;
 }
