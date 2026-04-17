@@ -24,9 +24,27 @@ function initAudio() {
 }
 
 function setTransportEnabled(on) {
-  ['btn-seek-start','btn-rewind','btn-stop','play-pause','btn-fwd'].forEach(id => {
+  ['btn-rewind','play-pause','btn-fwd'].forEach(id => {
     document.getElementById(id).disabled = !on;
   });
+}
+
+function setTrackDisplayName(text) {
+  const el = document.getElementById('track-name');
+  el.classList.remove('ticker');
+  el.style.removeProperty('--ticker-dist');
+  el.style.removeProperty('--ticker-dur');
+  el.textContent = text;
+  // Double rAF ensures layout is settled before measuring
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const overflow = el.scrollWidth - el.offsetWidth;
+    if (overflow > 4) {
+      el.style.setProperty('--ticker-dist', `-${overflow + 12}px`);
+      // ~40 px/s feels readable; minimum 4s so short overflows aren't frantic
+      el.style.setProperty('--ticker-dur', `${Math.max(4, overflow / 40)}s`);
+      el.classList.add('ticker');
+    }
+  }));
 }
 
 function loadAudio(file) {
@@ -148,6 +166,7 @@ function renderMandala() {
 let waveSpin      = 0;
 let waveRingCount = 6;
 let waveSpinSpeed = 1.0;
+let waveSpacing   = 0.09;
 
 function renderEmojiWaves() {
   const W = canvas2d.width, H = canvas2d.height;
@@ -160,7 +179,7 @@ function renderEmojiWaves() {
   for (let ring = 0; ring < RINGS; ring++) {
     // Outer rings read older bass values → undulating delay
     const delayedBass = ring === 0 ? bass : bassHistory[Math.min(ring * 2, BASS_HISTORY_LEN - 1)];
-    const baseR  = (ring + 1) * Math.min(W, H) * 0.09;
+    const baseR  = (ring + 1) * Math.min(W, H) * waveSpacing;
     const r      = baseR * (1 + delayedBass * 0.45);
     const count  = ring === 0 ? 1 : ring * 6;
     const size   = 14 + ring * 3 + delayedBass * 18;
@@ -588,8 +607,8 @@ document.getElementById('audio-input').addEventListener('change', e => {
   loadAudio(file);
 
   // Show filename as default; try to read ID3 tags for title + album art
-  const nameEl = document.getElementById('track-name');
-  nameEl.textContent = file.name.replace(/\.[^/.]+$/, '');
+  const baseName = file.name.replace(/\.[^/.]+$/, '');
+  setTrackDisplayName(baseName);
 
   if (window.jsmediatags) {
     jsmediatags.read(file, {
@@ -597,7 +616,7 @@ document.getElementById('audio-input').addEventListener('change', e => {
         const t = tag.tags;
         const title = t.title ? (t.artist ? `${t.artist} — ${t.title}` : t.title) : null;
         if (title) {
-          nameEl.textContent = title;
+          setTrackDisplayName(title);
           document.getElementById('ipod-track-name').textContent = t.title || title;
         }
         if (t.picture) {
@@ -652,19 +671,6 @@ document.getElementById('play-pause').addEventListener('click', () => {
   syncPlayBtn();
 });
 
-document.getElementById('btn-stop').addEventListener('click', () => {
-  if (!audioBuffer) return;
-  pause();
-  pauseOffset = 0;
-  syncPlayBtn();
-});
-
-document.getElementById('btn-seek-start').addEventListener('click', () => {
-  if (!audioBuffer) return;
-  pauseOffset = 0;
-  if (isPlaying) play();
-});
-
 document.getElementById('btn-rewind').addEventListener('click', () => {
   if (!audioBuffer) return;
   const cur = isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
@@ -693,6 +699,10 @@ document.getElementById('rings-slider').addEventListener('input', e => {
 
 document.getElementById('spin-slider').addEventListener('input', e => {
   waveSpinSpeed = e.target.value / 50;
+});
+
+document.getElementById('tight-slider').addEventListener('input', e => {
+  waveSpacing = e.target.value / 1000;
 });
 
 document.getElementById('spread-slider').addEventListener('input', e => {
