@@ -31,7 +31,7 @@ http.createServer((req, res) => {
   }
 
   if (url === '/' || url === '') url = '/index.html';
-  const file = path.join(root, url);
+  const file = path.join(root, decodeURIComponent(url));
 
   // Prevent directory traversal outside project root
   if (!file.startsWith(root)) { res.writeHead(403); res.end('Forbidden'); return; }
