@@ -246,8 +246,12 @@ function renderEmojiVortex() {
 
   tunnelRot += 0.003 + mid * 0.012;
 
+  // Compute how many emojis are needed to reach the screen corners
+  const cornerR  = Math.sqrt(cx * cx + cy * cy);
+  const count    = Math.min(2000, Math.ceil((cornerR / (phylloSpread * scl)) ** 2) + 30);
+
   // Render outer → inner so small center emojis layer on top
-  for (let i = PHYLLO_COUNT - 1; i >= 0; i--) {
+  for (let i = count - 1; i >= 0; i--) {
     const angle = i * GOLDEN_ANGLE + tunnelRot;
     const r     = phylloSpread * Math.sqrt(i) * scl;
     const x     = cx + r * Math.cos(angle);
@@ -255,9 +259,9 @@ function renderEmojiVortex() {
 
     const size  = (5 + Math.sqrt(i) * 6.5) * scl * (1 + bass * 0.5);
 
-    // Soft fade at screen edge
-    const edge  = Math.min(W, H) * 0.52;
-    const alpha = Math.min(1, Math.max(0, 1 - (r - edge * 0.8) / (edge * 0.2)));
+    // Fade only near screen edges (rectangular, covers all four sides)
+    const edgeDist = Math.min(x, W - x, y, H - y);
+    const alpha    = Math.min(1, Math.max(0, edgeDist / (size * 0.6)));
 
     if (size < 2 || alpha < 0.02) continue;
 
