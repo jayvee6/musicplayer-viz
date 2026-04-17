@@ -339,6 +339,95 @@ function renderHypnoRings() {
   }
 }
 
+// ── Mode 6: Subwoofer ─────────────────────────────────────────────────────────
+// Derived from Hypno Rings. Styled as a speaker cone viewed head-on.
+// Non-linear ring spacing simulates cone-depth perspective (inner rings compressed).
+// Dark charcoal palette: center recedes, surround faces the viewer.
+// Bass-history delay travels from voice coil (center) outward through the surround.
+
+let subOffset     = 0;
+let subColorShift = 0;
+
+function renderSubwoofer() {
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+  const W = canvas2d.width, H = canvas2d.height;
+  const cx = W / 2, cy = H / 2;
+  const maxR   = Math.min(W, H) * 0.46;
+  const SPACING = 40;
+
+  // Bass surges the zoom — heavy hit = cone punches forward
+  subOffset += (0.5 + bass * 9) * ringSpeed;
+  while (subOffset >= SPACING) {
+    subOffset     -= SPACING;
+    subColorShift += 1;
+  }
+
+  const numRings = Math.ceil(maxR / SPACING) + 2;
+
+  // ── Background: speaker chassis ────────────────────────────────────────────
+  ctx.fillStyle = '#060606';
+  ctx.fillRect(0, 0, W, H);
+
+  // Basket / frame ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR * 1.13, 0, Math.PI * 2);
+  ctx.fillStyle = '#161412';
+  ctx.fill();
+
+  // Surround backing
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+  ctx.fillStyle = '#0b0b0b';
+  ctx.fill();
+
+  // ── Cone rings ─────────────────────────────────────────────────────────────
+  // Drawn largest → smallest. Inner rings read newer bass (faster reaction at voice coil);
+  // outer rings read older history (the wave arrives late at the surround).
+  for (let i = numRings; i >= 1; i--) {
+    const histIdx     = Math.min(i - 1, BASS_HISTORY_LEN - 1);
+    const delayedBass = bassHistory[histIdx];
+
+    const r = i * SPACING - subOffset + delayedBass * 22;
+    if (r <= 0 || r > maxR * 1.01) continue;
+
+    // depth: 0 = near-center, 1 = near-edge
+    const depth   = Math.max(0, Math.min(1, r / maxR));
+    // Alternate ridge/valley for corrugated cone texture
+    const isRidge = (i + subColorShift) % 2 === 0;
+    const baseL   = 6 + depth * 24;                      // darker center → lighter edge
+    const ridgeL  = isRidge ? 5 : 0;                     // ridges catch a little more light
+    const bassL   = delayedBass * 12 * depth;             // surround flex glows on bass hit
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsl(210,7%,${baseL + ridgeL + bassL}%)`;
+    ctx.fill();
+  }
+
+  // ── Dust cap ───────────────────────────────────────────────────────────────
+  // Dome over the voice coil. Pulses directly with current bass (no delay — it IS the coil).
+  const capR = maxR * 0.13 + bass * maxR * 0.04;
+  const grad = ctx.createRadialGradient(
+    cx - capR * 0.28, cy - capR * 0.28, capR * 0.04,
+    cx, cy, capR
+  );
+  grad.addColorStop(0,   `hsl(210,8%,${30 + bass * 24}%)`);
+  grad.addColorStop(0.5, `hsl(210,6%,${14 + bass * 10}%)`);
+  grad.addColorStop(1,   `hsl(210,4%,6%)`);
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, capR, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Cap rim — subtle edge highlight
+  ctx.beginPath();
+  ctx.arc(cx, cy, capR, 0, Math.PI * 2);
+  ctx.strokeStyle = `hsla(210,10%,${22 + bass * 20}%,0.7)`;
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+}
+
 // ── Mode 5: Spiral Rings ──────────────────────────────────────────────────────
 
 let spiralOffset     = 0;
@@ -575,7 +664,7 @@ let currentMode = 0;
 function setMode(mode) {
   currentMode = mode;
   const is3D     = mode === 3;
-  const hasSpeed = mode === 4 || mode === 5;
+  const hasSpeed = mode === 4 || mode === 5 || mode === 6;
   canvas2d.style.display = is3D ? 'none' : 'block';
   document.getElementById('webgl-container').style.display = is3D ? 'block' : 'none';
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
@@ -628,6 +717,7 @@ function loop(ts) {
     case 3: renderBlob(t);       break;
     case 4: renderHypnoRings();  break;
     case 5: renderSpiralRings(); break;
+    case 6: renderSubwoofer();   break;
   }
 
   requestAnimationFrame(loop);
