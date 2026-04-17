@@ -235,9 +235,13 @@ let phylloZoom   = 1.0;  // Z slider → overall scale (0.2–3.0; slider divide
 const VORTEX_ARMS  = 12;
 const VORTEX_STEPS = 13; // emojis per arm
 
-// Each bass hit spawns an expanding pressure ring that physically displaces emojis
-const activeRipples  = [];
-let   prevBassRipple = 0;
+// Traveling sine wave: ripplePhase advances every frame so the wave moves outward.
+// rippleEnergy spikes on bass hits and decays — amplitude = 0 between beats.
+let ripplePhase     = 0;
+let rippleEnergy    = 0;
+let prevBassRip     = 0;
+let rippleAmplitude = 12;  // Ripple slider: max px of radial displacement (0–30)
+let rippleSpeedVal  = 5;   // Speed slider: phase advance per frame (1–20 → 0.05–1.0 rad)
 
 function renderEmojiVortex() {
   ctx.clearRect(0, 0, canvas2d.width, canvas2d.height);
@@ -252,19 +256,12 @@ function renderEmojiVortex() {
   const twist     = phylloSpread * 0.00025;
 
   // ── Ripple engine ─────────────────────────────────────────────────────────
-  // Spawn a new ring on bass spike; cap at 5 so stacking can't overwhelm arms
-  if (activeRipples.length < 5 && bass > 0.28 && bass > prevBassRipple + 0.07) {
-    activeRipples.push({ r: minR, energy: Math.min(1, bass * 1.5) });
-  }
-  prevBassRipple = bass * 0.82; // follow bass downward so next spike re-triggers
-
-  for (let i = activeRipples.length - 1; i >= 0; i--) {
-    activeRipples[i].r      += 5;     // expand at 5 px/frame ≈ 300 px/s
-    activeRipples[i].energy *= 0.965; // energy decays as wave spreads
-    if (activeRipples[i].r > maxR + 80 || activeRipples[i].energy < 0.02) {
-      activeRipples.splice(i, 1);
-    }
-  }
+  // Wave travels outward each frame (phase += 0.25 rad ≈ 4 px/frame at k=0.063).
+  // rippleEnergy spikes on each bass hit and decays — zero displacement at silence.
+  ripplePhase += rippleSpeedVal * 0.05; // slider 1–20 → 0.05–1.0 rad/frame
+  rippleEnergy *= 0.88;
+  if (bass > prevBassRip + 0.08) rippleEnergy = Math.min(1, rippleEnergy + bass * 1.2);
+  prevBassRip = bass * 0.75;
 
   // ── Draw arms ─────────────────────────────────────────────────────────────
   for (let arm = 0; arm < VORTEX_ARMS; arm++) {
@@ -275,20 +272,15 @@ function renderEmojiVortex() {
       const t = step / (VORTEX_STEPS - 1);
       const r = minR + (maxR - minR) * t;
 
-      // Derivative-of-Gaussian wavelet: d=0 → no push; d<0 (behind wave) → pushed
-      // outward; d>0 (ahead of wave) → slight inward pull. Emoji returns to exact
-      // rest position as the ring passes — true oscillation, no drift or size change.
-      let displace = 0;
-      for (const rip of activeRipples) {
-        const d = r - rip.r;              // positive = emoji is ahead of wave
-        displace += rip.energy * 26 * (-d / 30) * Math.exp(-(d * d) / 1800);
-      }
+      // sin(k·r − phase): k=0.063 → wavelength≈100px, phase velocity≈4px/frame.
+      // Amplitude bounded by rippleEnergy·12 (max 12px < step spacing 27px).
+      const displace = rippleEnergy * rippleAmplitude * Math.sin(r * 0.063 - ripplePhase);
 
       const finalAngle = baseAngle + r * twist + tunnelRot;
       const x = cx + (r + displace) * Math.cos(finalAngle);
       const y = cy + (r + displace) * Math.sin(finalAngle);
 
-      const size = shortSide * (0.03 + t * 0.11);   // size never changes
+      const size = shortSide * (0.03 + t * 0.11);
       const half = size / 2;
 
       ctx.globalAlpha = 0.35 + t * 0.65;
@@ -750,6 +742,14 @@ document.getElementById('spread-slider').addEventListener('input', e => {
 
 document.getElementById('zoom-slider').addEventListener('input', e => {
   phylloZoom = e.target.value / 100;
+});
+
+document.getElementById('ripple-slider').addEventListener('input', e => {
+  rippleAmplitude = +e.target.value;
+});
+
+document.getElementById('ripple-speed-slider').addEventListener('input', e => {
+  rippleSpeedVal = +e.target.value;
 });
 
 // ─── iPod overlay ─────────────────────────────────────────────────────────────
