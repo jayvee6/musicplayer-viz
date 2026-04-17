@@ -14,7 +14,6 @@ let bass = 0, mid = 0, treble = 0;
 const BASS_HISTORY_LEN = 16;
 const bassHistory = new Array(BASS_HISTORY_LEN).fill(0);
 
-
 function initAudio() {
   audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
   analyser   = audioCtx.createAnalyser();
@@ -73,7 +72,7 @@ function play() {
 
 function pause() {
   if (!sourceNode) return;
-  pauseOffset = audioCtx.currentTime - startTime;
+  pauseOffset = (audioCtx.currentTime - startTime) % audioBuffer.duration;
   sourceNode.stop();
   isPlaying = false;
 }
@@ -127,6 +126,7 @@ function drawPolygon(cx, cy, r, sides, rot) {
 
 function renderMandala() {
   const W = canvas2d.width, H = canvas2d.height;
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.fillRect(0, 0, W, H);
 
@@ -171,6 +171,7 @@ let waveSpacing   = 0.09;
 
 function renderEmojiWaves() {
   const W = canvas2d.width, H = canvas2d.height;
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   ctx.clearRect(0, 0, W, H);
 
   const cx = W / 2, cy = H / 2;
@@ -180,6 +181,9 @@ function renderEmojiWaves() {
   // Only boost emoji SIZE — never touch ring radius so tightness is unaffected.
   const spinFactor = Math.min(1, waveSpinSpeed);    // 0 = stopped, 1 = full spin
   const sizeAmp    = 18 + (1 - spinFactor) * 46;   // 18 normal → 64 when stopped
+
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
 
   const RINGS = waveRingCount;
   for (let ring = 0; ring < RINGS; ring++) {
@@ -192,15 +196,11 @@ function renderEmojiWaves() {
     const dir    = ring % 2 === 0 ? 1 : -1;
 
     ctx.font = `${size}px serif`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-
     for (let j = 0; j < count; j++) {
-      const angle   = (j / count) * Math.PI * 2 + waveSpin * dir;
-      const x       = cx + r * Math.cos(angle);
-      const y       = cy + r * Math.sin(angle);
-      const emoji   = EMOJIS[(ring * 4 + j) % EMOJIS.length];
-      ctx.fillText(emoji, x, y);
+      const angle = (j / count) * Math.PI * 2 + waveSpin * dir;
+      ctx.fillText(EMOJIS[(ring * 4 + j) % EMOJIS.length],
+        cx + r * Math.cos(angle),
+        cy + r * Math.sin(angle));
     }
   }
 }
@@ -235,12 +235,14 @@ let phylloZoom   = 1.0;  // Z slider → overall scale (0.2–3.0; slider divide
 const VORTEX_ARMS  = 12;
 const VORTEX_STEPS = 13; // emojis per arm
 
-// Traveling sine wave: ripplePhase advances every frame so the wave moves outward.
-// rippleEnergy spikes on bass hits and decays — amplitude = 0 between beats.
+// Bass-history ripple: each arm step reads bassHistory[step * rippleStepSize].
+// Inner step reacts to current bass; outer steps react to older values.
+// The delay IS the outward-traveling wave — no separate phase or energy state.
 let rippleAmplitude = 12;  // Ripple slider: max px of radial displacement (0–30)
 let rippleStepSize  = 1;   // Speed slider: history frames skipped per step (1–20)
 
 function renderEmojiVortex() {
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   ctx.clearRect(0, 0, canvas2d.width, canvas2d.height);
   const W  = canvas2d.width,  H = canvas2d.height;
   const cx = W / 2,           cy = H / 2;
@@ -295,6 +297,7 @@ let ringColorShift = 0;  // flips parity each time offset wraps — keeps bands 
 let ringHue        = 0;
 
 function renderHypnoRings() {
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   const W = canvas2d.width, H = canvas2d.height;
   const cx = W / 2, cy = H / 2;
   const maxR   = Math.sqrt(cx * cx + cy * cy) * 1.3;
@@ -338,6 +341,7 @@ let spiralOffset     = 0;
 let spiralHue        = 0;
 
 function renderSpiralRings() {
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   const W  = canvas2d.width, H = canvas2d.height;
   const cx = W / 2, cy = H / 2;
   const maxR  = Math.sqrt(cx * cx + cy * cy) * 1.15;
@@ -359,28 +363,27 @@ function renderSpiralRings() {
   const lineW    = PITCH * 0.62;
   const thetaMax = TURNS * Math.PI * 2;
 
-  // Precompute paths — reused across all draw passes so arms stay visually equal
-  const armPts = [];
+  // Build Path2D objects once per frame — stroke() reuses them across all 5 passes
+  // without re-iterating the point list in JS each time.
+  const armPaths = [];
   for (let arm = 0; arm < ARMS; arm++) {
     const armOff = arm * Math.PI;
-    const pts = [];
+    const path   = new Path2D();
+    let   started = false;
     for (let s = 0; s <= STEPS; s++) {
       const theta = (s / STEPS) * thetaMax;
       const r     = spiralOffset + (theta / (Math.PI * 2)) * PITCH;
       if (r > maxR) break;
-      pts.push(cx + r * Math.cos(theta + armOff), cy + r * Math.sin(theta + armOff));
+      const x = cx + r * Math.cos(theta + armOff);
+      const y = cy + r * Math.sin(theta + armOff);
+      if (!started) { path.moveTo(x, y); started = true; }
+      else            path.lineTo(x, y);
     }
-    armPts.push(pts);
+    if (started) armPaths.push(path);
   }
 
   function tracePaths() {
-    for (const pts of armPts) {
-      if (pts.length < 4) continue;
-      ctx.beginPath();
-      ctx.moveTo(pts[0], pts[1]);
-      for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
-      ctx.stroke();
-    }
+    for (const path of armPaths) ctx.stroke(path);
   }
 
   ctx.lineCap = 'butt';
@@ -428,6 +431,10 @@ function renderSpiralRings() {
   ctx.fill();
   ctx.shadowBlur  = 0;
   ctx.shadowColor = 'transparent';
+
+  // Reset line styles so they don't leak into other render functions
+  ctx.lineCap  = 'butt';
+  ctx.lineJoin = 'miter';
 }
 
 // ─── Three.js — Mode 3: Raymarching Blob ─────────────────────────────────────
@@ -565,8 +572,6 @@ function setMode(mode) {
   currentMode = mode;
   const is3D     = mode === 3;
   const hasSpeed = mode === 4 || mode === 5;
-  const hasExtra = mode === 1 || mode === 2;
-
   canvas2d.style.display = is3D ? 'none' : 'block';
   document.getElementById('webgl-container').style.display = is3D ? 'block' : 'none';
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
@@ -647,13 +652,14 @@ document.getElementById('audio-input').addEventListener('change', e => {
           document.getElementById('ipod-track-name').textContent = t.title || title;
         }
         if (t.picture) {
+          if (albumArtUrl) URL.revokeObjectURL(albumArtUrl);
           const bytes = new Uint8Array(t.picture.data);
           const blob  = new Blob([bytes], { type: t.picture.format });
-          const src   = URL.createObjectURL(blob);
+          albumArtUrl = URL.createObjectURL(blob);
           const artEl = document.getElementById('album-art');
-          artEl.src = src; artEl.style.display = 'block';
+          artEl.src = albumArtUrl; artEl.style.display = 'block';
           const ipodArt = document.getElementById('ipod-art');
-          ipodArt.src = src; ipodArt.style.display = 'block';
+          ipodArt.src = albumArtUrl; ipodArt.style.display = 'block';
         }
         syncIPodView();
       },
@@ -672,7 +678,7 @@ progressWrap.addEventListener('click', e => {
   if (!audioBuffer) return;
   const rect = e.currentTarget.getBoundingClientRect();
   pauseOffset = ((e.clientX - rect.left) / rect.width) * audioBuffer.duration;
-  if (isPlaying) play();
+  if (isPlaying) play(); // seekBy not used here — absolute position, not delta
 });
 
 progressWrap.addEventListener('mouseenter', () => {
@@ -691,26 +697,27 @@ function syncPlayBtn() {
   document.getElementById('play-pause').textContent = isPlaying ? '⏸' : '▶';
 }
 
-document.getElementById('play-pause').addEventListener('click', () => {
+function currentPos() {
+  return isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
+}
+
+function seekBy(delta) {
+  if (!audioBuffer) return;
+  pauseOffset = Math.max(0, Math.min(audioBuffer.duration, currentPos() + delta));
+  if (isPlaying) play();
+}
+
+function togglePlayback() {
   if (!audioCtx) return;
   if (audioCtx.state === 'suspended') audioCtx.resume();
   if (isPlaying) { pause(); } else { play(); }
   syncPlayBtn();
-});
+}
 
-document.getElementById('btn-rewind').addEventListener('click', () => {
-  if (!audioBuffer) return;
-  const cur = isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
-  pauseOffset = Math.max(0, cur - 10);
-  if (isPlaying) play();
-});
+document.getElementById('play-pause').addEventListener('click', togglePlayback);
 
-document.getElementById('btn-fwd').addEventListener('click', () => {
-  if (!audioBuffer) return;
-  const cur = isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
-  pauseOffset = Math.min(audioBuffer.duration, cur + 10);
-  if (isPlaying) play();
-});
+document.getElementById('btn-rewind').addEventListener('click', () => seekBy(-10));
+document.getElementById('btn-fwd').addEventListener('click',    () => seekBy(+10));
 
 document.querySelectorAll('.mode-btn').forEach((btn, i) => {
   btn.addEventListener('click', () => setMode(i));
@@ -748,6 +755,8 @@ document.getElementById('ripple-speed-slider').addEventListener('input', e => {
   rippleStepSize = +e.target.value;
 });
 
+let albumArtUrl = null;  // tracks current object URL so prior one can be revoked
+
 // ─── iPod overlay ─────────────────────────────────────────────────────────────
 
 const controlsEl  = document.getElementById('controls');
@@ -783,24 +792,11 @@ document.getElementById('btn-ipod').addEventListener('click', () => {
 document.querySelector('#ipod-wheel .wheel-menu').addEventListener('click', hideIPod);
 
 // iPod center → play / pause
-document.getElementById('ipod-center').addEventListener('click', () => {
-  if (!audioCtx) return;
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  if (isPlaying) { pause(); } else { play(); }
-  syncPlayBtn();
-});
+document.getElementById('ipod-center').addEventListener('click', togglePlayback);
 
 // iPod forward/back → seek ±10 s
-document.querySelector('#ipod-wheel .wheel-forward').addEventListener('click', () => {
-  if (!audioBuffer) return;
-  pauseOffset = Math.min(audioBuffer.duration, (isPlaying ? audioCtx.currentTime - startTime : pauseOffset) + 10);
-  if (isPlaying) play();
-});
-document.querySelector('#ipod-wheel .wheel-back').addEventListener('click', () => {
-  if (!audioBuffer) return;
-  pauseOffset = Math.max(0, (isPlaying ? audioCtx.currentTime - startTime : pauseOffset) - 10);
-  if (isPlaying) play();
-});
+document.querySelector('#ipod-wheel .wheel-forward').addEventListener('click', () => seekBy(+10));
+document.querySelector('#ipod-wheel .wheel-back').addEventListener('click',    () => seekBy(-10));
 
 // ─── Hide controls + fullscreen ───────────────────────────────────────────────
 
