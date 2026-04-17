@@ -340,101 +340,110 @@ function renderHypnoRings() {
 }
 
 // ── Mode 6: Subwoofer ─────────────────────────────────────────────────────────
-// Derived from Hypno Rings. Styled as a speaker cone viewed head-on.
-// Non-linear ring spacing simulates cone-depth perspective (inner rings compressed).
-// Dark charcoal palette: center recedes, surround faces the viewer.
-// Bass-history delay travels from voice coil (center) outward through the surround.
+// Realistic speaker cone viewed head-on.
+// Zones: cabinet bg → basket/frame → wide rubber surround → smooth cone → dust cap
+// The whole cone pumps in/out with bass. Bass-history ripple adds a subtle wave
+// traveling from the voice coil outward through the cone surface.
 
 function renderSubwoofer() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   const W = canvas2d.width, H = canvas2d.height;
   const cx = W / 2, cy = H / 2;
-  const maxR   = Math.min(W, H) * 0.46;
-  const SPACING = 40;
+  const S = Math.min(W, H);
 
-  // No zoom scroll — rings are fixed. Bass displacement pumps them outward and back.
-  const numRings = Math.ceil(maxR / SPACING) + 2;
+  // Speaker geometry (at rest)
+  const frameR    = S * 0.46;          // outer edge of basket
+  const surroundR = S * 0.43;          // outer edge of rubber surround
+  const coneR     = S * 0.30;          // inner edge of surround / outer edge of cone
+  const capR_rest = S * 0.09;          // dust cap rest radius
 
-  // ── Background: speaker chassis ────────────────────────────────────────────
+  // ── Whole-cone pump: bass pushes the cone face toward viewer ───────────────
+  // Scale by depth position: surround flexes most, center flexes least (geometry)
+  const pump = bass * 26;              // current bass = immediate piston movement
+
+  // ── 1. Cabinet background ──────────────────────────────────────────────────
   ctx.fillStyle = '#060606';
   ctx.fillRect(0, 0, W, H);
 
-  // Basket / frame ring
+  // ── 2. Basket / frame (cast metal ring) ────────────────────────────────────
   ctx.beginPath();
-  ctx.arc(cx, cy, maxR * 1.13, 0, Math.PI * 2);
-  ctx.fillStyle = '#161412';
+  ctx.arc(cx, cy, frameR, 0, Math.PI * 2);
+  ctx.fillStyle = '#18160f';
   ctx.fill();
 
-  // Surround backing
+  // ── 3. Rubber surround ─────────────────────────────────────────────────────
+  // Wide toroidal ring. Radial gradient fakes the curved cross-section:
+  // shadow at inner junction, rising to a gloss highlight, falling to outer rim.
+  // On bass the surround inner edge flexes outward (cone pumps forward).
+  const surroundFlex  = bassHistory[Math.min(8, BASS_HISTORY_LEN - 1)] * 14;
+  const surroundInner = coneR + surroundFlex;  // inner edge rides with the cone
+
+  const sg = ctx.createRadialGradient(cx, cy, surroundInner, cx, cy, surroundR);
+  sg.addColorStop(0,    `hsl(30,6%,${10 + surroundFlex * 0.4}%)`);  // inner shadow
+  sg.addColorStop(0.25, `hsl(30,5%,${18 + surroundFlex * 0.6}%)`);  // rising
+  sg.addColorStop(0.55, `hsl(30,6%,${34 + surroundFlex * 0.9}%)`);  // gloss peak
+  sg.addColorStop(0.78, `hsl(30,5%,${22 + surroundFlex * 0.5}%)`);  // falling
+  sg.addColorStop(1,    `hsl(30,4%,${11 + surroundFlex * 0.2}%)`);  // outer shadow
+
   ctx.beginPath();
-  ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
-  ctx.fillStyle = '#0b0b0b';
+  ctx.arc(cx, cy, surroundR, 0, Math.PI * 2);
+  ctx.fillStyle = sg;
   ctx.fill();
 
-  // ── Cone rings ─────────────────────────────────────────────────────────────
-  // Drawn largest → smallest. Inner rings read newer bass (faster reaction at voice coil);
-  // outer rings read older history (the wave arrives late at the surround).
-  for (let i = numRings; i >= 1; i--) {
-    const histIdx     = Math.min(i - 1, BASS_HISTORY_LEN - 1);
-    const delayedBass = bassHistory[histIdx];
+  // ── 4. Cone surface ────────────────────────────────────────────────────────
+  // Smooth funnel — radial gradient from rim (lighter, faces viewer) to center (dark, recedes).
+  // A few faint concentric strokes hint at the cone's depth curvature.
+  // The cone's apparent radius expands when it punches forward (pump).
+  const coneEdge = surroundInner;   // cone outer edge tracks surround inner
 
-    // Fixed rest position + bass pushes ring outward (cone pumping forward)
-    const r = i * SPACING + delayedBass * 52;
-    if (r <= 0 || r > maxR * 1.08) continue;
+  const cg = ctx.createRadialGradient(cx, cy, capR_rest * 1.1, cx, cy, coneEdge);
+  cg.addColorStop(0,    `hsl(210,5%,${7  + bass * 6}%)`);   // dark center
+  cg.addColorStop(0.35, `hsl(210,6%,${13 + bass * 10}%)`);  // mid
+  cg.addColorStop(0.7,  `hsl(210,7%,${22 + bass * 14}%)`);  // near surround, catches light
+  cg.addColorStop(1,    `hsl(210,6%,${17 + bass * 8}%)`);   // junction shadow with surround
 
-    // depth: 0 = near-center, 1 = near-edge (based on rest position, not displaced)
-    const restR   = i * SPACING;
-    const depth   = Math.max(0, Math.min(1, restR / maxR));
-    const baseL   = 6 + depth * 24;                      // darker center → lighter edge
-    const bassL   = delayedBass * 22 * depth;             // surround flex glows on bass hit
+  ctx.beginPath();
+  ctx.arc(cx, cy, coneEdge, 0, Math.PI * 2);
+  ctx.fillStyle = cg;
+  ctx.fill();
 
-    // 3-state anatomy: structural ring → membrane → structural ring → …
-    // Structural: hard, dark, low shimmer  |  Membrane: thin, light, high shimmer
-    const phase = i % 3;
-    let ringL, sat, shimmer;
-    if (phase === 0) {
-      // Hard structural ring — dark, rigid, barely shimmers
-      ringL   = baseL + 2;
-      sat     = 7;
-      shimmer = mid * 3;
-    } else if (phase === 1) {
-      // Inner membrane face — notably lighter, stretches with vibration
-      ringL   = baseL + 14;
-      sat     = 10;
-      shimmer = mid * 14;
-    } else {
-      // Outer membrane face — slightly lighter still, maximum shimmer
-      ringL   = baseL + 10;
-      sat     = 9;
-      shimmer = mid * 18;
-    }
-
+  // Subtle depth lines — 3 faint strokes only, suggest curvature without looking like rings
+  const NUM_DEPTH = 3;
+  for (let i = 1; i <= NUM_DEPTH; i++) {
+    const t           = i / (NUM_DEPTH + 1);
+    const baseDepthR  = capR_rest * 1.4 + (coneEdge - capR_rest * 1.4) * t;
+    const ripple      = bassHistory[Math.min(Math.round(t * (BASS_HISTORY_LEN - 1)), BASS_HISTORY_LEN - 1)];
+    const dr          = baseDepthR + ripple * 28 * t;
+    if (dr <= 0 || dr > coneEdge) continue;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = `hsl(210,${sat}%,${ringL + bassL + shimmer}%)`;
-    ctx.fill();
+    ctx.arc(cx, cy, dr, 0, Math.PI * 2);
+    ctx.strokeStyle = `hsla(210,5%,${6 + (1 - t) * 6 + mid * 8}%,0.55)`;
+    ctx.lineWidth   = 1.8;
+    ctx.stroke();
   }
 
-  // ── Dust cap ───────────────────────────────────────────────────────────────
-  // Dome over the voice coil. Pulses directly with current bass (no delay — it IS the coil).
-  const capR = maxR * 0.13 + bass * maxR * 0.10;
-  const grad = ctx.createRadialGradient(
-    cx - capR * 0.28, cy - capR * 0.28, capR * 0.04,
+  // ── 5. Dust cap ────────────────────────────────────────────────────────────
+  // Large dome. Pumps with instantaneous bass (voice coil = fastest moving part).
+  const capR = capR_rest + bass * capR_rest * 0.28;
+
+  const dcg = ctx.createRadialGradient(
+    cx - capR * 0.24, cy - capR * 0.26, capR * 0.05,
     cx, cy, capR
   );
-  grad.addColorStop(0,   `hsl(210,8%,${30 + bass * 24}%)`);
-  grad.addColorStop(0.5, `hsl(210,6%,${14 + bass * 10}%)`);
-  grad.addColorStop(1,   `hsl(210,4%,6%)`);
+  dcg.addColorStop(0,    `hsl(210,8%,${40 + bass * 30}%)`);   // specular highlight
+  dcg.addColorStop(0.3,  `hsl(210,7%,${24 + bass * 18}%)`);   // dome surface
+  dcg.addColorStop(0.65, `hsl(210,5%,${13 + bass * 10}%)`);   // dome shoulder
+  dcg.addColorStop(1,    `hsl(210,4%,7%)`);                    // edge into cone
 
   ctx.beginPath();
   ctx.arc(cx, cy, capR, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
+  ctx.fillStyle = dcg;
   ctx.fill();
 
-  // Cap rim — subtle edge highlight
+  // Cap rim line
   ctx.beginPath();
   ctx.arc(cx, cy, capR, 0, Math.PI * 2);
-  ctx.strokeStyle = `hsla(210,10%,${22 + bass * 20}%,0.7)`;
+  ctx.strokeStyle = `hsla(210,8%,${20 + bass * 18}%,0.75)`;
   ctx.lineWidth   = 1.5;
   ctx.stroke();
 }
