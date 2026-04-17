@@ -53,18 +53,16 @@
     <!-- ── Mode + extra controls ──────────────────────────── -->
     <div id="bottom-row">
 
-      <!-- Sliders row: extra controls fade in/out within a fixed slot -->
+      <!-- Sliders row: always centered; only relevant controls shown -->
       <div id="sliders-row">
-        <div id="mode-extra-slot">
-          <div id="vortex-controls">
-            <label class="speed-label">Spread<input type="range" id="spread-slider" min="4" max="40" value="18"></label>
-            <label class="speed-label">Z<input type="range" id="zoom-slider" min="20" max="300" value="100"></label>
-          </div>
-          <div id="waves-controls">
-            <label class="speed-label">Rings<input type="range" id="rings-slider" min="2" max="10" value="6"></label>
-            <label class="speed-label">Spin<input type="range" id="spin-slider" min="0" max="100" value="50"></label>
-            <label class="speed-label">Tight<input type="range" id="tight-slider" min="20" max="150" value="90"></label>
-          </div>
+        <div id="vortex-controls">
+          <label class="speed-label">Spread<input type="range" id="spread-slider" min="4" max="40" value="18"></label>
+          <label class="speed-label">Z<input type="range" id="zoom-slider" min="20" max="300" value="100"></label>
+        </div>
+        <div id="waves-controls">
+          <label class="speed-label">Rings<input type="range" id="rings-slider" min="2" max="10" value="6"></label>
+          <label class="speed-label">Spin<input type="range" id="spin-slider" min="0" max="100" value="50"></label>
+          <label class="speed-label">Tight<input type="range" id="tight-slider" min="20" max="150" value="90"></label>
         </div>
         <div id="speed-control">
           <label class="speed-label">Speed<input type="range" id="speed-slider" min="0" max="100" value="50"></label>

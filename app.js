@@ -555,11 +555,7 @@ function setMode(mode) {
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
   document.getElementById('waves-controls').classList.toggle('visible', mode === 1);
 
-  const speedCtrl  = document.getElementById('speed-control');
-  const slidersRow = document.getElementById('sliders-row');
-  speedCtrl.style.display  = hasSpeed ? 'flex' : 'none';
-  slidersRow.style.display = (hasSpeed || hasExtra) ? 'flex' : 'none';
-  slidersRow.classList.toggle('speed-only', hasSpeed && !hasExtra);
+  document.getElementById('speed-control').style.display = hasSpeed ? 'flex' : 'none';
 
   document.querySelectorAll('.mode-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i === mode);

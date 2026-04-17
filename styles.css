@@ -501,53 +501,35 @@ body {
 #sliders-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-/* When only Speed is showing, center it and hide the empty slot */
-#sliders-row.speed-only {
   justify-content: center;
-}
-#sliders-row.speed-only #mode-extra-slot {
-  display: none;
-}
-
-/* Fixed-size slot — vortex/waves controls are absolutely
-   positioned inside; they fade without affecting layout */
-#mode-extra-slot {
-  flex: 1;
-  position: relative;
-  height: 22px;
-  min-width: 0;
+  gap: 20px;
+  min-height: 22px;
 }
 
 #vortex-controls,
 #waves-controls {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  transform: translateY(-50%) translateX(-6px);
-  display: flex;
+  display: none;
+  width: 100%;
   align-items: center;
-  gap: 8px;
-  opacity: 0;
-  pointer-events: none;
+  justify-content: space-evenly;
   white-space: nowrap;
-  transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
 #vortex-controls.visible,
 #waves-controls.visible {
-  opacity: 1;
-  pointer-events: all;
-  transform: translateY(-50%) translateX(0);
+  display: flex;
+  animation: sliders-in 0.22s ease;
+}
+
+@keyframes sliders-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 #speed-control {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
 }
 
 .speed-label {
