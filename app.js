@@ -345,9 +345,6 @@ function renderHypnoRings() {
 // Dark charcoal palette: center recedes, surround faces the viewer.
 // Bass-history delay travels from voice coil (center) outward through the surround.
 
-let subOffset     = 0;
-let subColorShift = 0;
-
 function renderSubwoofer() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   const W = canvas2d.width, H = canvas2d.height;
@@ -355,13 +352,7 @@ function renderSubwoofer() {
   const maxR   = Math.min(W, H) * 0.46;
   const SPACING = 40;
 
-  // Bass surges the zoom — heavy hit = cone punches forward
-  subOffset += (0.6 + bass * 16) * ringSpeed;
-  while (subOffset >= SPACING) {
-    subOffset     -= SPACING;
-    subColorShift += 1;
-  }
-
+  // No zoom scroll — rings are fixed. Bass displacement pumps them outward and back.
   const numRings = Math.ceil(maxR / SPACING) + 2;
 
   // ── Background: speaker chassis ────────────────────────────────────────────
@@ -387,17 +378,19 @@ function renderSubwoofer() {
     const histIdx     = Math.min(i - 1, BASS_HISTORY_LEN - 1);
     const delayedBass = bassHistory[histIdx];
 
-    const r = i * SPACING - subOffset + delayedBass * 52;
+    // Fixed rest position + bass pushes ring outward (cone pumping forward)
+    const r = i * SPACING + delayedBass * 52;
     if (r <= 0 || r > maxR * 1.08) continue;
 
-    // depth: 0 = near-center, 1 = near-edge
-    const depth   = Math.max(0, Math.min(1, r / maxR));
+    // depth: 0 = near-center, 1 = near-edge (based on rest position, not displaced)
+    const restR   = i * SPACING;
+    const depth   = Math.max(0, Math.min(1, restR / maxR));
     const baseL   = 6 + depth * 24;                      // darker center → lighter edge
     const bassL   = delayedBass * 22 * depth;             // surround flex glows on bass hit
 
     // 3-state anatomy: structural ring → membrane → structural ring → …
     // Structural: hard, dark, low shimmer  |  Membrane: thin, light, high shimmer
-    const phase = (i + subColorShift) % 3;
+    const phase = i % 3;
     let ringL, sat, shimmer;
     if (phase === 0) {
       // Hard structural ring — dark, rigid, barely shimmers
@@ -682,7 +675,7 @@ let currentMode = 0;
 function setMode(mode) {
   currentMode = mode;
   const is3D     = mode === 3;
-  const hasSpeed = mode === 4 || mode === 5 || mode === 6;
+  const hasSpeed = mode === 4 || mode === 5;
   canvas2d.style.display = is3D ? 'none' : 'block';
   document.getElementById('webgl-container').style.display = is3D ? 'block' : 'none';
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
