@@ -175,6 +175,11 @@ function renderEmojiWaves() {
   const cx = W / 2, cy = H / 2;
   waveSpin += 0.008 * waveSpinSpeed;
 
+  // When spin is near zero the rings pulse like a subwoofer.
+  // Only boost emoji SIZE — never touch ring radius so tightness is unaffected.
+  const spinFactor = Math.min(1, waveSpinSpeed);    // 0 = stopped, 1 = full spin
+  const sizeAmp    = 18 + (1 - spinFactor) * 46;   // 18 normal → 64 when stopped
+
   const RINGS = waveRingCount;
   for (let ring = 0; ring < RINGS; ring++) {
     // Outer rings read older bass values → undulating delay
@@ -182,7 +187,7 @@ function renderEmojiWaves() {
     const baseR  = (ring + 1) * Math.min(W, H) * waveSpacing;
     const r      = baseR * (1 + delayedBass * 0.45);
     const count  = ring === 0 ? 1 : ring * 6;
-    const size   = 14 + ring * 3 + delayedBass * 18;
+    const size   = 14 + ring * 3 + delayedBass * sizeAmp;
     const dir    = ring % 2 === 0 ? 1 : -1;
 
     ctx.font = `${size}px serif`;
@@ -541,11 +546,20 @@ let currentMode = 0;
 
 function setMode(mode) {
   currentMode = mode;
-  const is3D = mode === 3;
+  const is3D     = mode === 3;
+  const hasSpeed = mode === 4 || mode === 5;
+  const hasExtra = mode === 1 || mode === 2;
+
   canvas2d.style.display = is3D ? 'none' : 'block';
   document.getElementById('webgl-container').style.display = is3D ? 'block' : 'none';
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
   document.getElementById('waves-controls').classList.toggle('visible', mode === 1);
+
+  const speedCtrl  = document.getElementById('speed-control');
+  const slidersRow = document.getElementById('sliders-row');
+  speedCtrl.style.display  = hasSpeed ? 'flex' : 'none';
+  slidersRow.style.display = (hasSpeed || hasExtra) ? 'flex' : 'none';
+  slidersRow.classList.toggle('speed-only', hasSpeed && !hasExtra);
 
   document.querySelectorAll('.mode-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i === mode);

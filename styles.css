@@ -504,6 +504,14 @@ body {
   gap: 10px;
 }
 
+/* When only Speed is showing, center it and hide the empty slot */
+#sliders-row.speed-only {
+  justify-content: center;
+}
+#sliders-row.speed-only #mode-extra-slot {
+  display: none;
+}
+
 /* Fixed-size slot — vortex/waves controls are absolutely
    positioned inside; they fade without affecting layout */
 #mode-extra-slot {
