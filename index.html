@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Visualizer</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+</head>
+<body>
+  <canvas id="canvas-2d"></canvas>
+  <div id="webgl-container"></div>
+
+  <div id="controls">
+
+    <!-- ── Music controls ─────────────────────────────────── -->
+    <div id="music-row">
+      <img id="album-art" alt="" style="display:none">
+      <div id="track-details">
+        <span id="track-name">No track loaded</span>
+        <span id="track-time">0:00 / 0:00</span>
+      </div>
+      <div id="music-actions">
+        <label class="file-label">
+          <input type="file" id="audio-input" accept="audio/*">
+          <span>Choose File</span>
+        </label>
+        <div id="transport">
+          <button class="transport-btn" id="btn-seek-start" title="Seek to start" disabled>⏮</button>
+          <button class="transport-btn" id="btn-rewind"     title="Rewind 10s"    disabled>⏪</button>
+          <button class="transport-btn" id="btn-stop"       title="Stop"           disabled>⏹</button>
+          <button class="transport-btn" id="play-pause"     title="Play / Pause"   disabled>▶</button>
+          <button class="transport-btn" id="btn-fwd"        title="Fast forward 10s" disabled>⏩</button>
+        </div>
+        <button id="ipod-toggle">iPod</button>
+      </div>
+    </div>
+
+    <!-- ── Progress bar ───────────────────────────────────── -->
+    <div id="progress-wrap">
+      <div id="progress-fill"></div>
+      <div id="scrub-head"></div>
+    </div>
+
+    <!-- ── Mode + extra controls ──────────────────────────── -->
+    <div id="bottom-row">
+
+      <!-- Sliders row: extra controls fade in/out within a fixed slot -->
+      <div id="sliders-row">
+        <div id="mode-extra-slot">
+          <div id="vortex-controls">
+            <label class="speed-label">Spread<input type="range" id="spread-slider" min="4" max="40" value="18"></label>
+            <label class="speed-label">Z<input type="range" id="zoom-slider" min="20" max="300" value="100"></label>
+          </div>
+          <div id="waves-controls">
+            <label class="speed-label">Rings<input type="range" id="rings-slider" min="2" max="10" value="6"></label>
+            <label class="speed-label">Spin<input type="range" id="spin-slider" min="0" max="100" value="50"></label>
+          </div>
+        </div>
+        <div id="speed-control">
+          <label class="speed-label">Speed<input type="range" id="speed-slider" min="0" max="100" value="50"></label>
+        </div>
+      </div>
+
+      <!-- Mode buttons row: always same width, determines pill size -->
+      <div id="mode-buttons">
+        <button class="mode-btn active" data-mode="0">Mandala</button>
+        <button class="mode-btn" data-mode="1">Emoji Waves</button>
+        <button class="mode-btn" data-mode="2">Emoji Vortex</button>
+        <button class="mode-btn" data-mode="3">3D Blob</button>
+        <button class="mode-btn" data-mode="4">Hypno Rings</button>
+        <button class="mode-btn" data-mode="5">Spiral</button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ── Utility buttons (bottom-right) ──────────────────── -->
+  <div id="ui-buttons">
+    <button class="ui-btn" id="btn-ipod" title="iPod mode">🎵</button>
+    <button class="ui-btn" id="btn-hide" title="Hide controls">👁</button>
+    <button class="ui-btn" id="btn-fullscreen" title="Fullscreen">⛶</button>
+  </div>
+
+  <!-- ── iPod overlay ─────────────────────────────────────── -->
+  <div class="ipod" id="ipod-overlay">
+
+    <div class="ipod-screen-bezel">
+      <div class="ipod-screen">
+
+        <!-- No track loaded -->
+        <div class="screen-view" id="ipod-view-empty">
+          <div class="screen-titlebar">Music Visualizer</div>
+          <div class="ipod-empty">Load a track<br>to begin</div>
+        </div>
+
+        <!-- Now playing -->
+        <div class="screen-view hidden" id="ipod-view-nowplaying">
+          <div class="screen-titlebar">Now Playing</div>
+          <div class="now-playing">
+            <img id="ipod-art" alt="">
+            <p class="np-title" id="ipod-track-name">—</p>
+            <p class="np-artist" id="ipod-track-time">0:00 / 0:00</p>
+            <div class="np-progress">
+              <div class="np-bar"><div class="np-fill" id="ipod-np-fill"></div></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="wheel" id="ipod-wheel">
+      <div class="wheel-label wheel-menu">MENU</div>
+      <div class="wheel-label wheel-back">⏮</div>
+      <div class="wheel-label wheel-forward">⏭</div>
+      <div class="wheel-label wheel-play">▶︎</div>
+      <div class="wheel-center" id="ipod-center"></div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

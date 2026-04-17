@@ -1,0 +1,579 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #000;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+}
+
+#canvas-2d {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#webgl-container {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+#webgl-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ─── iPod overlay ───────────────────────────────────────── */
+
+.ipod {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.94);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.32s cubic-bezier(0.22,1,0.36,1),
+              transform 0.32s cubic-bezier(0.22,1,0.36,1);
+  z-index: 10;
+  width: 236px;
+  background: linear-gradient(160deg, #ffffff 0%, #e8e8e8 100%);
+  border-radius: 28px;
+  padding: 22px 22px 28px;
+  box-shadow:
+    0 2px 0 rgba(255,255,255,0.8) inset,
+    0 -1px 0 rgba(0,0,0,0.15) inset,
+    0 28px 70px rgba(0,0,0,0.65),
+    0 8px 24px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  user-select: none;
+}
+
+.ipod.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  pointer-events: all;
+}
+
+/* Screen */
+.ipod-screen-bezel {
+  width: 100%;
+  background: #1a1a1a;
+  border-radius: 6px;
+  padding: 3px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.6) inset, 0 0 0 1px rgba(0,0,0,0.4);
+}
+
+.ipod-screen {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #1c2a1c;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.screen-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.screen-view.hidden { display: none; }
+
+.screen-titlebar {
+  background: linear-gradient(180deg, #4a80d9 0%, #2d5fc4 100%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.ipod-empty {
+  flex: 1;
+  background: #c8d8b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: rgba(0,0,0,0.5);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.now-playing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: #c8d8b8;
+  flex: 1;
+}
+
+#ipod-art {
+  width: 60px;
+  height: 60px;
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  object-fit: cover;
+}
+
+.np-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #000;
+  text-align: center;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-artist {
+  font-size: 9px;
+  color: rgba(0,0,0,0.5);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.np-progress { width: 100%; margin-top: 4px; }
+.np-bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.np-fill {
+  height: 100%;
+  width: 0%;
+  background: #2d5fc4;
+  border-radius: 2px;
+  transition: width 0.25s linear;
+}
+
+/* Click wheel */
+.wheel {
+  position: relative;
+  width: 172px;
+  height: 172px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #f5f5f5 0%, #dcdcdc 100%);
+  box-shadow:
+    0 2px 0 rgba(255,255,255,0.9) inset,
+    0 -2px 0 rgba(0,0,0,0.12) inset,
+    0 4px 12px rgba(0,0,0,0.2),
+    0 1px 3px rgba(0,0,0,0.15);
+  flex-shrink: 0;
+}
+
+.wheel-label {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 700;
+  color: #555;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  z-index: 1;
+}
+.wheel-label:hover { color: #000; }
+
+.wheel-menu    { top: 10px;    left: 50%; transform: translateX(-50%); }
+.wheel-back    { top: 50%;     left: 10px; transform: translateY(-50%); }
+.wheel-forward { top: 50%;     right: 10px; transform: translateY(-50%); }
+.wheel-play    { bottom: 10px; left: 50%; transform: translateX(-50%); }
+
+.wheel-center {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #f8f8f8 0%, #e0e0e0 100%);
+  box-shadow:
+    0 2px 0 rgba(255,255,255,0.8) inset,
+    0 -1px 0 rgba(0,0,0,0.1) inset,
+    0 2px 6px rgba(0,0,0,0.18);
+  cursor: pointer;
+  transition: box-shadow 0.1s;
+}
+.wheel-center:active {
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 -1px 0 rgba(0,0,0,0.15) inset,
+    0 1px 3px rgba(0,0,0,0.15);
+}
+
+/* ─── Controls pill ──────────────────────────────────────── */
+
+#controls {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  padding: 14px 18px;
+  z-index: 100;
+  min-width: 520px;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+
+#controls.ipod-mode,
+#controls.controls-hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(14px);
+  pointer-events: none;
+}
+
+/* ─── Utility overlay buttons (always visible unless controls hidden) ── */
+
+#ui-buttons {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  gap: 8px;
+  z-index: 200;
+  transition: opacity 0.28s ease;
+}
+
+#ui-buttons.all-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ui-btn {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.6);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+.ui-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+/* iPod toggle button inside controls */
+#ipod-toggle {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.85);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+#ipod-toggle:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* ─── Music row ──────────────────────────────────────────── */
+
+#music-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#album-art {
+  width: 42px;
+  height: 42px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+#track-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+#track-name {
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#track-time {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+#music-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.file-label {
+  cursor: pointer;
+}
+
+.file-label input[type="file"] {
+  display: none;
+}
+
+.file-label span {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.85);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.file-label span:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ─── Transport controls ──────────────────────────────────── */
+
+#transport {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.transport-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, background 0.12s;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.transport-btn:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.transport-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Play/pause is slightly larger and brighter as primary action */
+#play-pause {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+#play-pause:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+}
+
+/* ─── Progress bar ───────────────────────────────────────── */
+
+#progress-wrap {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+  transition: height 0.12s, margin 0.12s;
+}
+
+#progress-wrap:hover {
+  height: 7px;
+  margin-top: -1.5px;
+  margin-bottom: -1.5px;
+}
+
+#progress-fill {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 3px;
+  width: 0%;
+  pointer-events: none;
+}
+
+#scrub-head {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  left: 0%;
+}
+
+/* ─── Bottom row (mode + extra controls) ─────────────────── */
+
+#bottom-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Sliders row ──────────────────────────────────────────── */
+
+#sliders-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Fixed-size slot — vortex/waves controls are absolutely
+   positioned inside; they fade without affecting layout */
+#mode-extra-slot {
+  flex: 1;
+  position: relative;
+  height: 22px;
+  min-width: 0;
+}
+
+#vortex-controls,
+#waves-controls {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%) translateX(-6px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+#vortex-controls.visible,
+#waves-controls.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(-50%) translateX(0);
+}
+
+#speed-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.speed-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.speed-label input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 72px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  outline: none;
+  cursor: pointer;
+}
+
+.speed-label input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+/* ── Mode buttons row ─────────────────────────────────────── */
+
+#mode-buttons {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+}
+
+.mode-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.5);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.mode-btn:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.mode-btn.active {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
