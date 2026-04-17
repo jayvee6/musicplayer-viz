@@ -14,10 +14,6 @@ let bass = 0, mid = 0, treble = 0;
 const BASS_HISTORY_LEN = 16;
 const bassHistory = new Array(BASS_HISTORY_LEN).fill(0);
 
-// Ripple history: 120 frames (~2s) lets the wave travel ~500px at 250px/s
-const RIPPLE_HISTORY_LEN = 120;
-const rippleHistory = new Array(RIPPLE_HISTORY_LEN).fill(0);
-const RIPPLE_SPEED_PPS  = 250; // pixels per second the bass wave travels outward
 
 function initAudio() {
   audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
@@ -101,8 +97,6 @@ function updateAudioValues() {
 
   bassHistory.unshift(bass);
   bassHistory.pop();
-  rippleHistory.unshift(bass);
-  rippleHistory.pop();
 }
 
 // ─── Canvas 2D ───────────────────────────────────────────────────────────────
@@ -241,42 +235,59 @@ let phylloZoom   = 1.0;  // Z slider → overall scale (0.2–3.0; slider divide
 const VORTEX_ARMS  = 12;
 const VORTEX_STEPS = 13; // emojis per arm
 
+// Each bass hit spawns an expanding pressure ring that physically displaces emojis
+const activeRipples  = [];
+let   prevBassRipple = 0;
+
 function renderEmojiVortex() {
   ctx.clearRect(0, 0, canvas2d.width, canvas2d.height);
   const W  = canvas2d.width,  H = canvas2d.height;
   const cx = W / 2,           cy = H / 2;
 
-  // Slow continuous rotation; mid adds shimmer
   tunnelRot += 0.004 + mid * 0.008;
 
   const shortSide = Math.min(W, H);
-  const minR      = shortSide * 0.08;                               // empty center hole
+  const minR      = shortSide * 0.08;
   const maxR      = Math.sqrt(cx * cx + cy * cy) * 0.82 * phylloZoom;
+  const twist     = phylloSpread * 0.00025;
 
-  // Spread (4–40, default 18) → radians of twist per pixel of radius
-  // Default: 18 × 0.00025 = 0.0045 rad/px → ~70° total curve at default maxR
-  const baseTwist    = phylloSpread * 0.00025;
-  const dynamicTwist = baseTwist; // twist stays constant; bass lives in the ripple
+  // ── Ripple engine ─────────────────────────────────────────────────────────
+  // Spawn a new ring whenever bass spikes above the rolling threshold
+  if (bass > 0.28 && bass > prevBassRipple + 0.07) {
+    activeRipples.push({ r: minR, energy: Math.min(1, bass * 1.5) });
+  }
+  prevBassRipple = bass * 0.82; // follow bass downward so next spike re-triggers
 
-  // Render outer→inner so small center emojis draw on top of large outer ones
+  for (let i = activeRipples.length - 1; i >= 0; i--) {
+    activeRipples[i].r      += 5;     // expand at 5 px/frame ≈ 300 px/s
+    activeRipples[i].energy *= 0.965; // energy decays as wave spreads
+    if (activeRipples[i].r > maxR + 80 || activeRipples[i].energy < 0.02) {
+      activeRipples.splice(i, 1);
+    }
+  }
+
+  // ── Draw arms ─────────────────────────────────────────────────────────────
   for (let arm = 0; arm < VORTEX_ARMS; arm++) {
     const baseAngle = arm * (Math.PI * 2 / VORTEX_ARMS);
     const img       = emojiCache[EMOJIS[arm % EMOJIS.length]];
 
     for (let step = VORTEX_STEPS - 1; step >= 0; step--) {
-      const t = step / (VORTEX_STEPS - 1);   // 0 = center, 1 = outer edge
+      const t = step / (VORTEX_STEPS - 1);
       const r = minR + (maxR - minR) * t;
 
-      // twist accumulates with radius → curved pinwheel
-      const finalAngle = baseAngle + r * dynamicTwist + tunnelRot;
+      // Arms never move — the ripple travels as a wave of SIZE enlargement.
+      // Each emoji grows as the pressure ring sweeps past it (σ≈25px Gaussian).
+      let sizeBoost = 0;
+      for (const rip of activeRipples) {
+        const d = r - rip.r;
+        sizeBoost += rip.energy * 0.75 * Math.exp(-(d * d) / 1250);
+      }
+
+      const finalAngle = baseAngle + r * twist + tunnelRot;
       const x = cx + r * Math.cos(finalAngle);
       const y = cy + r * Math.sin(finalAngle);
 
-      // Sample bass from history at the frame-delay matching this radius —
-      // inner emojis see the beat first; the pulse radiates outward like a shockwave.
-      const frameDelay = Math.round(r / (RIPPLE_SPEED_PPS / 60));
-      const rippleBass = rippleHistory[Math.min(frameDelay, RIPPLE_HISTORY_LEN - 1)];
-      const size = shortSide * (0.03 + t * 0.11) * (1 + rippleBass * 0.6);
+      const size = shortSide * (0.03 + t * 0.11) * (1 + sizeBoost);
       const half = size / 2;
 
       ctx.globalAlpha = 0.35 + t * 0.65;
