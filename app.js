@@ -274,7 +274,9 @@ function renderEmojiVortex() {
       const x = cx + (r + displace) * Math.cos(finalAngle);
       const y = cy + (r + displace) * Math.sin(finalAngle);
 
-      const size = shortSide * (0.03 + t * 0.11);
+      // Treble (snare/cymbal) flashes a sharp size pop across all emojis at once.
+      // No delay — the instant uniform flash contrasts the slow rolling bass ripple.
+      const size = shortSide * (0.03 + t * 0.11) * (1 + treble * 1.2);
       const half = size / 2;
 
       ctx.globalAlpha = 0.35 + t * 0.65;
