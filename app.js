@@ -252,8 +252,8 @@ function renderEmojiVortex() {
   const twist     = phylloSpread * 0.00025;
 
   // ── Ripple engine ─────────────────────────────────────────────────────────
-  // Spawn a new ring whenever bass spikes above the rolling threshold
-  if (bass > 0.28 && bass > prevBassRipple + 0.07) {
+  // Spawn a new ring on bass spike; cap at 5 so stacking can't overwhelm arms
+  if (activeRipples.length < 5 && bass > 0.28 && bass > prevBassRipple + 0.07) {
     activeRipples.push({ r: minR, energy: Math.min(1, bass * 1.5) });
   }
   prevBassRipple = bass * 0.82; // follow bass downward so next spike re-triggers
@@ -275,19 +275,20 @@ function renderEmojiVortex() {
       const t = step / (VORTEX_STEPS - 1);
       const r = minR + (maxR - minR) * t;
 
-      // Arms never move — the ripple travels as a wave of SIZE enlargement.
-      // Each emoji grows as the pressure ring sweeps past it (σ≈25px Gaussian).
-      let sizeBoost = 0;
+      // Derivative-of-Gaussian wavelet: d=0 → no push; d<0 (behind wave) → pushed
+      // outward; d>0 (ahead of wave) → slight inward pull. Emoji returns to exact
+      // rest position as the ring passes — true oscillation, no drift or size change.
+      let displace = 0;
       for (const rip of activeRipples) {
-        const d = r - rip.r;
-        sizeBoost += rip.energy * 0.75 * Math.exp(-(d * d) / 1250);
+        const d = r - rip.r;              // positive = emoji is ahead of wave
+        displace += rip.energy * 26 * (-d / 30) * Math.exp(-(d * d) / 1800);
       }
 
       const finalAngle = baseAngle + r * twist + tunnelRot;
-      const x = cx + r * Math.cos(finalAngle);
-      const y = cy + r * Math.sin(finalAngle);
+      const x = cx + (r + displace) * Math.cos(finalAngle);
+      const y = cy + (r + displace) * Math.sin(finalAngle);
 
-      const size = shortSide * (0.03 + t * 0.11) * (1 + sizeBoost);
+      const size = shortSide * (0.03 + t * 0.11);   // size never changes
       const half = size / 2;
 
       ctx.globalAlpha = 0.35 + t * 0.65;
