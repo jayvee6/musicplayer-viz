@@ -356,7 +356,7 @@ function renderSubwoofer() {
   const SPACING = 40;
 
   // Bass surges the zoom — heavy hit = cone punches forward
-  subOffset += (0.5 + bass * 9) * ringSpeed;
+  subOffset += (0.6 + bass * 16) * ringSpeed;
   while (subOffset >= SPACING) {
     subOffset     -= SPACING;
     subColorShift += 1;
@@ -387,26 +387,44 @@ function renderSubwoofer() {
     const histIdx     = Math.min(i - 1, BASS_HISTORY_LEN - 1);
     const delayedBass = bassHistory[histIdx];
 
-    const r = i * SPACING - subOffset + delayedBass * 22;
-    if (r <= 0 || r > maxR * 1.01) continue;
+    const r = i * SPACING - subOffset + delayedBass * 52;
+    if (r <= 0 || r > maxR * 1.08) continue;
 
     // depth: 0 = near-center, 1 = near-edge
     const depth   = Math.max(0, Math.min(1, r / maxR));
-    // Alternate ridge/valley for corrugated cone texture
-    const isRidge = (i + subColorShift) % 2 === 0;
     const baseL   = 6 + depth * 24;                      // darker center → lighter edge
-    const ridgeL  = isRidge ? 5 : 0;                     // ridges catch a little more light
-    const bassL   = delayedBass * 12 * depth;             // surround flex glows on bass hit
+    const bassL   = delayedBass * 22 * depth;             // surround flex glows on bass hit
+
+    // 3-state anatomy: structural ring → membrane → structural ring → …
+    // Structural: hard, dark, low shimmer  |  Membrane: thin, light, high shimmer
+    const phase = (i + subColorShift) % 3;
+    let ringL, sat, shimmer;
+    if (phase === 0) {
+      // Hard structural ring — dark, rigid, barely shimmers
+      ringL   = baseL + 2;
+      sat     = 7;
+      shimmer = mid * 3;
+    } else if (phase === 1) {
+      // Inner membrane face — notably lighter, stretches with vibration
+      ringL   = baseL + 14;
+      sat     = 10;
+      shimmer = mid * 14;
+    } else {
+      // Outer membrane face — slightly lighter still, maximum shimmer
+      ringL   = baseL + 10;
+      sat     = 9;
+      shimmer = mid * 18;
+    }
 
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = `hsl(210,7%,${baseL + ridgeL + bassL}%)`;
+    ctx.fillStyle = `hsl(210,${sat}%,${ringL + bassL + shimmer}%)`;
     ctx.fill();
   }
 
   // ── Dust cap ───────────────────────────────────────────────────────────────
   // Dome over the voice coil. Pulses directly with current bass (no delay — it IS the coil).
-  const capR = maxR * 0.13 + bass * maxR * 0.04;
+  const capR = maxR * 0.13 + bass * maxR * 0.10;
   const grad = ctx.createRadialGradient(
     cx - capR * 0.28, cy - capR * 0.28, capR * 0.04,
     cx, cy, capR
