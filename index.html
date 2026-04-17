@@ -16,25 +16,34 @@
 
     <!-- ── Music controls ─────────────────────────────────── -->
     <div id="music-row">
-      <img id="album-art" alt="" style="display:none">
+
+      <!-- Left: track info -->
       <div id="track-details">
-        <span id="track-name">No track loaded</span>
-        <span id="track-time">0:00 / 0:00</span>
-      </div>
-      <div id="music-actions">
-        <label class="file-label">
-          <input type="file" id="audio-input" accept="audio/*">
-          <span>Choose File</span>
-        </label>
-        <div id="transport">
-          <button class="transport-btn" id="btn-seek-start" title="Seek to start" disabled>⏮</button>
-          <button class="transport-btn" id="btn-rewind"     title="Rewind 10s"    disabled>⏪</button>
-          <button class="transport-btn" id="btn-stop"       title="Stop"           disabled>⏹</button>
-          <button class="transport-btn" id="play-pause"     title="Play / Pause"   disabled>▶</button>
-          <button class="transport-btn" id="btn-fwd"        title="Fast forward 10s" disabled>⏩</button>
+        <img id="album-art" alt="" style="display:none">
+        <div id="track-text">
+          <span id="track-name">No track loaded</span>
+          <span id="track-time">0:00 / 0:00</span>
         </div>
+      </div>
+
+      <!-- Center: transport (absolutely centered in pill) -->
+      <div id="transport">
+        <button class="transport-btn" id="btn-seek-start" title="Seek to start"    disabled>⏮</button>
+        <button class="transport-btn" id="btn-rewind"     title="Rewind 10s"       disabled>⏪</button>
+        <button class="transport-btn" id="btn-stop"       title="Stop"             disabled>⏹</button>
+        <button class="transport-btn" id="play-pause"     title="Play / Pause"     disabled>▶</button>
+        <button class="transport-btn" id="btn-fwd"        title="Fast forward 10s" disabled>⏩</button>
+      </div>
+
+      <!-- Right: file load + iPod -->
+      <div id="music-actions">
+        <label class="file-label" title="Load audio file">
+          <input type="file" id="audio-input" accept="audio/*">
+          <span>Load</span>
+        </label>
         <button id="ipod-toggle">iPod</button>
       </div>
+
     </div>
 
     <!-- ── Progress bar ───────────────────────────────────── -->

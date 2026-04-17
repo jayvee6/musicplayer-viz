@@ -301,25 +301,35 @@ body {
 /* ─── Music row ──────────────────────────────────────────── */
 
 #music-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+
+/* Left: album art + track text */
+#track-details {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
+  justify-self: start;
 }
 
 #album-art {
-  width: 42px;
-  height: 42px;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 5px;
   object-fit: cover;
   flex-shrink: 0;
   border: 1px solid rgba(255,255,255,0.12);
 }
 
-#track-details {
-  flex: 1;
+#track-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -339,11 +349,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Right: load button + iPod */
 #music-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  flex-shrink: 0;
+  justify-self: end;
 }
 
 .file-label {
@@ -371,12 +383,13 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* ─── Transport controls ──────────────────────────────────── */
+/* ─── Transport controls (grid center column — always centered) ── */
 
 #transport {
   display: flex;
   align-items: center;
   gap: 2px;
+  justify-self: center;
 }
 
 .transport-btn {

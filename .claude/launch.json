@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "musicplayer-viz",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["serve.js"],
+      "port": 3001
+    }
+  ]
+}
