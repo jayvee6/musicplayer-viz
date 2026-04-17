@@ -237,11 +237,8 @@ const VORTEX_STEPS = 13; // emojis per arm
 
 // Traveling sine wave: ripplePhase advances every frame so the wave moves outward.
 // rippleEnergy spikes on bass hits and decays — amplitude = 0 between beats.
-let ripplePhase     = 0;
-let rippleEnergy    = 0;
-let prevBassRip     = 0;
 let rippleAmplitude = 12;  // Ripple slider: max px of radial displacement (0–30)
-let rippleSpeedVal  = 5;   // Speed slider: phase advance per frame (1–20 → 0.05–1.0 rad)
+let rippleStepSize  = 1;   // Speed slider: history frames skipped per step (1–20)
 
 function renderEmojiVortex() {
   ctx.clearRect(0, 0, canvas2d.width, canvas2d.height);
@@ -256,12 +253,8 @@ function renderEmojiVortex() {
   const twist     = phylloSpread * 0.00025;
 
   // ── Ripple engine ─────────────────────────────────────────────────────────
-  // Wave travels outward each frame (phase += 0.25 rad ≈ 4 px/frame at k=0.063).
-  // rippleEnergy spikes on each bass hit and decays — zero displacement at silence.
-  ripplePhase += rippleSpeedVal * 0.05; // slider 1–20 → 0.05–1.0 rad/frame
-  rippleEnergy *= 0.88;
-  if (bass > prevBassRip + 0.08) rippleEnergy = Math.min(1, rippleEnergy + bass * 1.2);
-  prevBassRip = bass * 0.75;
+  // Same pattern as Emoji Waves: inner step reads current bass, each outer step
+  // reads progressively older bassHistory values. The delay IS the outward wave.
 
   // ── Draw arms ─────────────────────────────────────────────────────────────
   for (let arm = 0; arm < VORTEX_ARMS; arm++) {
@@ -272,9 +265,10 @@ function renderEmojiVortex() {
       const t = step / (VORTEX_STEPS - 1);
       const r = minR + (maxR - minR) * t;
 
-      // sin(k·r − phase): k=0.063 → wavelength≈100px, phase velocity≈4px/frame.
-      // Amplitude bounded by rippleEnergy·12 (max 12px < step spacing 27px).
-      const displace = rippleEnergy * rippleAmplitude * Math.sin(r * 0.063 - ripplePhase);
+      // Inner step (0) reacts to current bass; each outer step reads an older
+      // history entry — the delay creates the outward-traveling ripple.
+      const delayedBass = step === 0 ? bass : bassHistory[Math.min(step * rippleStepSize, BASS_HISTORY_LEN - 1)];
+      const displace    = delayedBass * rippleAmplitude;
 
       const finalAngle = baseAngle + r * twist + tunnelRot;
       const x = cx + (r + displace) * Math.cos(finalAngle);
@@ -749,7 +743,7 @@ document.getElementById('ripple-slider').addEventListener('input', e => {
 });
 
 document.getElementById('ripple-speed-slider').addEventListener('input', e => {
-  rippleSpeedVal = +e.target.value;
+  rippleStepSize = +e.target.value;
 });
 
 // ─── iPod overlay ─────────────────────────────────────────────────────────────
