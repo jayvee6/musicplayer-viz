@@ -14,6 +14,11 @@ let bass = 0, mid = 0, treble = 0;
 const BASS_HISTORY_LEN = 16;
 const bassHistory = new Array(BASS_HISTORY_LEN).fill(0);
 
+// Ripple history: 120 frames (~2s) lets the wave travel ~500px at 250px/s
+const RIPPLE_HISTORY_LEN = 120;
+const rippleHistory = new Array(RIPPLE_HISTORY_LEN).fill(0);
+const RIPPLE_SPEED_PPS  = 250; // pixels per second the bass wave travels outward
+
 function initAudio() {
   audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
   analyser   = audioCtx.createAnalyser();
@@ -96,6 +101,8 @@ function updateAudioValues() {
 
   bassHistory.unshift(bass);
   bassHistory.pop();
+  rippleHistory.unshift(bass);
+  rippleHistory.pop();
 }
 
 // ─── Canvas 2D ───────────────────────────────────────────────────────────────
@@ -249,7 +256,7 @@ function renderEmojiVortex() {
   // Spread (4–40, default 18) → radians of twist per pixel of radius
   // Default: 18 × 0.00025 = 0.0045 rad/px → ~70° total curve at default maxR
   const baseTwist    = phylloSpread * 0.00025;
-  const dynamicTwist = baseTwist * (1 + bass * 0.9); // bass tightens spiral on beat
+  const dynamicTwist = baseTwist; // twist stays constant; bass lives in the ripple
 
   // Render outer→inner so small center emojis draw on top of large outer ones
   for (let arm = 0; arm < VORTEX_ARMS; arm++) {
@@ -265,8 +272,11 @@ function renderEmojiVortex() {
       const x = cx + r * Math.cos(finalAngle);
       const y = cy + r * Math.sin(finalAngle);
 
-      // Emojis scale from small (center) to large (edge)
-      const size = shortSide * (0.03 + t * 0.11) * (1 + bass * 0.35);
+      // Sample bass from history at the frame-delay matching this radius —
+      // inner emojis see the beat first; the pulse radiates outward like a shockwave.
+      const frameDelay = Math.round(r / (RIPPLE_SPEED_PPS / 60));
+      const rippleBass = rippleHistory[Math.min(frameDelay, RIPPLE_HISTORY_LEN - 1)];
+      const size = shortSide * (0.03 + t * 0.11) * (1 + rippleBass * 0.6);
       const half = size / 2;
 
       ctx.globalAlpha = 0.35 + t * 0.65;
