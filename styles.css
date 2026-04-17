@@ -219,9 +219,7 @@ body {
 
 #controls {
   position: fixed;
-  bottom: 28px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* left + top set by JS; no transform centering */
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -233,13 +231,19 @@ body {
   padding: 14px 18px;
   z-index: 100;
   min-width: 580px;
-  transition: opacity 0.28s ease, transform 0.28s ease;
+  transition: opacity 0.28s ease;
+  cursor: grab;
+  user-select: none;
+}
+
+#controls.dragging {
+  cursor: grabbing;
+  transition: none;  /* no lag while dragging */
 }
 
 #controls.ipod-mode,
 #controls.controls-hidden {
   opacity: 0;
-  transform: translateX(-50%) translateY(14px);
   pointer-events: none;
 }
 

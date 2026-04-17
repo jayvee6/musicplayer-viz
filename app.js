@@ -965,6 +965,83 @@ window.addEventListener('resize', () => {
     threeRenderer.setSize(window.innerWidth, window.innerHeight);
     blobMesh.material.uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
   }
+  clampPillToViewport();
+});
+
+// ─── Draggable controls pill ──────────────────────────────────────────────────
+
+const PILL_POS_KEY = 'musicviz_pill_pos';
+
+// Tags that should initiate their own interaction, not a drag
+const NON_DRAG = new Set(['BUTTON', 'INPUT', 'LABEL', 'SELECT', 'A']);
+
+function isInteractive(el) {
+  let node = el;
+  while (node && node !== controlsEl) {
+    if (NON_DRAG.has(node.tagName)) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function clampPillToViewport() {
+  const r = controlsEl.getBoundingClientRect();
+  const x = Math.max(0, Math.min(window.innerWidth  - r.width,  r.left));
+  const y = Math.max(0, Math.min(window.innerHeight - r.height, r.top));
+  controlsEl.style.left = `${x}px`;
+  controlsEl.style.top  = `${y}px`;
+}
+
+function setPillPos(x, y) {
+  const r = controlsEl.getBoundingClientRect();
+  x = Math.max(0, Math.min(window.innerWidth  - r.width,  x));
+  y = Math.max(0, Math.min(window.innerHeight - r.height, y));
+  controlsEl.style.left = `${x}px`;
+  controlsEl.style.top  = `${y}px`;
+}
+
+function savePillPos() {
+  const r = controlsEl.getBoundingClientRect();
+  try { localStorage.setItem(PILL_POS_KEY, JSON.stringify({ x: r.left, y: r.top })); } catch {}
+}
+
+function initPillPos() {
+  const saved = (() => {
+    try { return JSON.parse(localStorage.getItem(PILL_POS_KEY)); } catch { return null; }
+  })();
+
+  if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+    controlsEl.style.left = `${saved.x}px`;
+    controlsEl.style.top  = `${saved.y}px`;
+    clampPillToViewport();  // in case viewport shrank since last session
+  } else {
+    // Default: bottom-center
+    const r = controlsEl.getBoundingClientRect();
+    controlsEl.style.left = `${Math.round((window.innerWidth - r.width)  / 2)}px`;
+    controlsEl.style.top  = `${Math.round(window.innerHeight - r.height - 28)}px`;
+  }
+}
+
+let dragState = null;
+
+controlsEl.addEventListener('mousedown', e => {
+  if (isInteractive(e.target)) return;
+  e.preventDefault();
+  const r = controlsEl.getBoundingClientRect();
+  dragState = { offX: e.clientX - r.left, offY: e.clientY - r.top };
+  controlsEl.classList.add('dragging');
+});
+
+document.addEventListener('mousemove', e => {
+  if (!dragState) return;
+  setPillPos(e.clientX - dragState.offX, e.clientY - dragState.offY);
+});
+
+document.addEventListener('mouseup', () => {
+  if (!dragState) return;
+  dragState = null;
+  controlsEl.classList.remove('dragging');
+  savePillPos();
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -972,3 +1049,5 @@ window.addEventListener('resize', () => {
 resizeCanvas();
 setMode(0);
 requestAnimationFrame(loop);
+// Position pill after first layout paint so getBoundingClientRect() has real dimensions
+requestAnimationFrame(initPillPos);
