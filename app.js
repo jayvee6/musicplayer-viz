@@ -320,16 +320,20 @@ function renderHypnoRings() {
   ctx.fillStyle = colorPop;
   ctx.fillRect(0, 0, W, H);
 
-  // Draw filled discs largest → smallest; parity uses ringColorShift offset
+  // Draw filled discs largest → smallest; parity uses ringColorShift offset.
+  // Each ring reads a progressively older bassHistory value — the delay IS the
+  // outward-traveling ripple, same pattern as Emoji Waves.
   for (let i = numRings; i >= 1; i--) {
-    const r = i * SPACING - ringOffset;
+    const histIdx     = Math.min(i - 1, BASS_HISTORY_LEN - 1);
+    const delayedBass = bassHistory[histIdx];
+    const r = i * SPACING - ringOffset + delayedBass * 18;
     if (r <= 0) continue;
 
     const isLight = (i + ringColorShift) % 2 === 0;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = isLight
-      ? `hsl(0,0%,${82 + bass * 18}%)`
+      ? `hsl(0,0%,${82 + delayedBass * 18}%)`
       : colorPop;
     ctx.fill();
   }
