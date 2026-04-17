@@ -33,12 +33,16 @@
         <button class="transport-btn" id="btn-fwd"    title="Fast forward 10s" disabled>⏩</button>
       </div>
 
-      <!-- Right: file load + iPod -->
+      <!-- Right: file load + playlist + iPod -->
       <div id="music-actions">
         <label class="file-label" title="Load audio file">
           <input type="file" id="audio-input" accept="audio/*">
           <span>Load</span>
         </label>
+        <div id="playlist-wrap">
+          <button id="playlist-btn" title="Music folder tracks">Tracks</button>
+          <ul id="playlist-menu"></ul>
+        </div>
         <button id="ipod-toggle">iPod</button>
       </div>
 

@@ -400,6 +400,78 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* ─── Playlist dropdown ──────────────────────────────────────── */
+
+#playlist-wrap {
+  position: relative;
+}
+
+#playlist-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.85);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+#playlist-btn:hover { background: rgba(255, 255, 255, 0.2); }
+#playlist-btn.open  { background: rgba(255, 255, 255, 0.18); }
+
+#playlist-menu {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  background: rgba(18, 18, 18, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 6px;
+  list-style: none;
+  min-width: 220px;
+  max-width: 340px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+#playlist-menu.open { display: block; }
+
+#playlist-menu li {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s, color 0.1s;
+}
+#playlist-menu li:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+#playlist-menu li.playing {
+  color: #fff;
+  font-weight: 600;
+}
+#playlist-menu .playlist-empty {
+  color: rgba(255,255,255,0.3);
+  font-style: italic;
+  cursor: default;
+}
+#playlist-menu .playlist-empty:hover {
+  background: transparent;
+  color: rgba(255,255,255,0.3);
+}
+
 /* ─── Transport controls (grid center column — always centered) ── */
 
 #transport {

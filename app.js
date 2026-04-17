@@ -871,6 +871,105 @@ document.getElementById('ripple-speed-slider').addEventListener('input', e => {
 
 let albumArtUrl = null;  // tracks current object URL so prior one can be revoked
 
+// ─── Playlist (music/ folder) ─────────────────────────────────────────────────
+
+const playlistBtn  = document.getElementById('playlist-btn');
+const playlistMenu = document.getElementById('playlist-menu');
+let   currentTrackName = null;
+
+function loadTrackFromUrl(url, displayName) {
+  if (!audioCtx) initAudio();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  fetch(url)
+    .then(r => r.arrayBuffer())
+    .then(buf => audioCtx.decodeAudioData(buf, decoded => {
+      audioBuffer = decoded;
+      setTransportEnabled(true);
+      currentTrackName = displayName;
+      renderPlaylistMenu(); // update playing highlight
+    }));
+
+  setTrackDisplayName(displayName);
+  document.getElementById('ipod-track-name').textContent = displayName;
+
+  // Try ID3 tags via jsmediatags using the URL
+  if (window.jsmediatags) {
+    jsmediatags.read(url, {
+      onSuccess(tag) {
+        const t = tag.tags;
+        const title = t.title ? (t.artist ? `${t.artist} — ${t.title}` : t.title) : null;
+        if (title) {
+          setTrackDisplayName(title);
+          document.getElementById('ipod-track-name').textContent = t.title || title;
+        }
+        if (t.picture) {
+          if (albumArtUrl) URL.revokeObjectURL(albumArtUrl);
+          const bytes = new Uint8Array(t.picture.data);
+          const blob  = new Blob([bytes], { type: t.picture.format });
+          albumArtUrl = URL.createObjectURL(blob);
+          const artEl = document.getElementById('album-art');
+          artEl.src = albumArtUrl; artEl.style.display = 'block';
+          const ipodArt = document.getElementById('ipod-art');
+          ipodArt.src = albumArtUrl; ipodArt.style.display = 'block';
+        }
+        syncIPodView();
+      },
+      onError() { syncIPodView(); }
+    });
+  } else {
+    syncIPodView();
+  }
+}
+
+function renderPlaylistMenu(tracks) {
+  // Called with a fresh list on open, or without args to refresh highlights only
+  const items = tracks !== undefined ? tracks : Array.from(playlistMenu.querySelectorAll('li:not(.playlist-empty)')).map(li => li.dataset.file);
+
+  playlistMenu.innerHTML = '';
+  if (!items.length) {
+    playlistMenu.innerHTML = '<li class="playlist-empty">No tracks in /music folder</li>';
+    return;
+  }
+  items.forEach(file => {
+    const li = document.createElement('li');
+    li.textContent = file.replace(/\.[^/.]+$/, ''); // strip extension
+    li.dataset.file = file;
+    if (file.replace(/\.[^/.]+$/, '') === currentTrackName || file === currentTrackName) {
+      li.classList.add('playing');
+    }
+    li.addEventListener('click', () => {
+      loadTrackFromUrl(`/music/${encodeURIComponent(file)}`, file.replace(/\.[^/.]+$/, ''));
+      closePlaylist();
+    });
+    playlistMenu.appendChild(li);
+  });
+}
+
+function openPlaylist() {
+  playlistBtn.classList.add('open');
+  playlistMenu.classList.add('open');
+  fetch('/api/tracks')
+    .then(r => r.json())
+    .then(tracks => renderPlaylistMenu(tracks))
+    .catch(() => renderPlaylistMenu([]));
+}
+
+function closePlaylist() {
+  playlistBtn.classList.remove('open');
+  playlistMenu.classList.remove('open');
+}
+
+playlistBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  playlistMenu.classList.contains('open') ? closePlaylist() : openPlaylist();
+});
+
+// Close when clicking outside
+document.addEventListener('click', e => {
+  if (!playlistMenu.contains(e.target) && e.target !== playlistBtn) closePlaylist();
+});
+
 // ─── iPod overlay ─────────────────────────────────────────────────────────────
 
 const controlsEl  = document.getElementById('controls');
