@@ -179,6 +179,7 @@ let waveSpacing   = 0.09;
 
 function renderEmojiWaves() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+  ctx.fillStyle = '#fff';   // Reset: Chrome uses fillStyle alpha when drawing color emoji
   ctx.clearRect(0, 0, W, H);
 
   const cx = W / 2, cy = H / 2;
