@@ -16,6 +16,7 @@ const MIME = {
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']);
 const MUSIC_DIR  = path.join(root, 'music');
+const PORT       = process.env.PORT || 3001;
 
 http.createServer((req, res) => {
   let url = req.url.split('?')[0];
@@ -45,4 +46,4 @@ http.createServer((req, res) => {
       res.end(data);
     }
   });
-}).listen(3001, () => console.log('musicplayer-viz serving on http://localhost:3001'));
+}).listen(PORT, () => console.log(`musicplayer-viz serving on http://localhost:${PORT}`));

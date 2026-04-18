@@ -103,9 +103,18 @@ function updateAudioValues() {
 const canvas2d = document.getElementById('canvas-2d');
 const ctx      = canvas2d.getContext('2d');
 
+// Logical canvas dimensions (CSS pixels). Used by all render functions.
+// Physical backing buffer = W*dpr × H*dpr so Chrome doesn't dim emoji.
+let W = window.innerWidth;
+let H = window.innerHeight;
+
 function resizeCanvas() {
-  canvas2d.width  = window.innerWidth;
-  canvas2d.height = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas2d.width  = Math.round(W * dpr);
+  canvas2d.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // reset + scale in one call
 }
 
 // ── Mode 0: Geometric Mandala ──────────────────────────────────────────────
@@ -125,7 +134,6 @@ function drawPolygon(cx, cy, r, sides, rot) {
 }
 
 function renderMandala() {
-  const W = canvas2d.width, H = canvas2d.height;
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.fillRect(0, 0, W, H);
@@ -170,7 +178,6 @@ let waveSpinSpeed = 1.0;
 let waveSpacing   = 0.09;
 
 function renderEmojiWaves() {
-  const W = canvas2d.width, H = canvas2d.height;
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   ctx.clearRect(0, 0, W, H);
 
@@ -243,8 +250,7 @@ let rippleStepSize  = 1;   // Speed slider: history frames skipped per step (1�
 
 function renderEmojiVortex() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-  ctx.clearRect(0, 0, canvas2d.width, canvas2d.height);
-  const W  = canvas2d.width,  H = canvas2d.height;
+  ctx.clearRect(0, 0, W, H);
   const cx = W / 2,           cy = H / 2;
 
   tunnelRot += 0.004 + mid * 0.008;
@@ -298,7 +304,6 @@ let ringHue        = 0;
 
 function renderHypnoRings() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-  const W = canvas2d.width, H = canvas2d.height;
   const cx = W / 2, cy = H / 2;
   const maxR   = Math.sqrt(cx * cx + cy * cy) * 1.3;
   const SPACING = 46;
@@ -347,7 +352,6 @@ function renderHypnoRings() {
 
 function renderSubwoofer() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-  const W = canvas2d.width, H = canvas2d.height;
   const cx = W / 2, cy = H / 2;
   const S = Math.min(W, H);
 
@@ -455,7 +459,6 @@ let spiralHue        = 0;
 
 function renderSpiralRings() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-  const W  = canvas2d.width, H = canvas2d.height;
   const cx = W / 2, cy = H / 2;
   const maxR  = Math.sqrt(cx * cx + cy * cy) * 1.15;
   const PITCH = 50;
