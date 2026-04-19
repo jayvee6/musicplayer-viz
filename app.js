@@ -695,13 +695,20 @@ let fluidStiffness   = 0.18;
 let fluidBlobSize    = 1.0;   // specular highlight brightness (0 = matte)
 
 function updateFluidTargets() {
-  const half = FLUID_N >> 1;    // 12 — spikes per side
-  const maxH = H * fluidSpikeHeight;
+  const half  = FLUID_N >> 1;    // 12 — spikes per side
+  const maxH  = H * fluidSpikeHeight;
+  const idleH = H * 0.06;        // minimum resting height — always visible
+  const now   = performance.now() / 1000;
   for (let i = 0; i < FLUID_N; i++) {
     // side 0 = center (bass bin 0); side 11 = edge (bin ~60)
-    const side = i < half ? half - 1 - i : i - half;
-    const bin  = Math.round(side / (half - 1) * 60);
-    fluidTargets[i] = (frequencyData[Math.min(bin, frequencyData.length - 1)] / 255) * maxH;
+    const side   = i < half ? half - 1 - i : i - half;
+    const bin    = Math.round(side / (half - 1) * 60);
+    const energy = frequencyData
+      ? (frequencyData[Math.min(bin, frequencyData.length - 1)] / 255) * maxH
+      : 0;
+    // Gentle idle oscillation ensures spikes are visible even without audio
+    const idle   = idleH * (0.4 + 0.6 * Math.sin(now * 0.7 + i * 0.52));
+    fluidTargets[i] = Math.max(idle, energy);
   }
 }
 
@@ -731,12 +738,13 @@ function drawFerroSpike(cx, spikeH, poolY, spaceW) {
   ctx.bezierCurveTo(cx - mw, bulY,  cx - mw * 0.16, tipY + spikeH * 0.13,  cx, tipY);
   ctx.closePath();
 
-  const hi   = Math.min(255, Math.round(215 * fluidBlobSize));
+  const hi   = Math.min(255, Math.round(220 * fluidBlobSize));
+  const lo   = Math.min(180, Math.round(70  * fluidBlobSize));
   const grad = ctx.createLinearGradient(cx - mw, 0, cx + mw, 0);
-  grad.addColorStop(0.00, 'rgba(38,8,58,1)');             // purple-dark left
-  grad.addColorStop(0.22, `rgba(${hi},${hi},${hi},1)`);   // white specular peak
-  grad.addColorStop(0.48, 'rgba(14,3,26,1)');             // purple-dark shadow
-  grad.addColorStop(1.00, 'rgba(3,0,8,1)');               // near-black right
+  grad.addColorStop(0.00, `rgba(${lo},${lo},${lo},1)`);   // medium grey left
+  grad.addColorStop(0.20, `rgba(${hi},${hi},${hi},1)`);   // bright specular peak
+  grad.addColorStop(0.46, `rgba(${Math.round(lo*0.3)},${Math.round(lo*0.3)},${Math.round(lo*0.3)},1)`);
+  grad.addColorStop(1.00, 'rgba(8,3,14,1)');              // dark right
   ctx.fillStyle = grad;
   ctx.fill();
 }
@@ -758,42 +766,34 @@ function renderFluid() {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, poolY, W, H - poolY);
 
-  // Purple radial glow from pool surface — pulses hard on bass
-  const pulse = 0.28 + bass * 0.52;
-  const glow  = ctx.createRadialGradient(W / 2, poolY, 0, W / 2, poolY, W * 0.62);
-  glow.addColorStop(0,   `rgba(110, 0, 220, ${pulse})`);
-  glow.addColorStop(0.4, `rgba(55, 0, 130, ${pulse * 0.45})`);
-  glow.addColorStop(1,   'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, W, H);
+  // Purple glow hugging the pool surface — does NOT cover spike area
+  const pulse     = 0.35 + bass * 0.55;
+  const glowH     = H * 0.22;   // only covers region around pool line
+  const surfGlow  = ctx.createLinearGradient(0, poolY - glowH, 0, poolY + glowH * 0.5);
+  surfGlow.addColorStop(0,   'rgba(0,0,0,0)');
+  surfGlow.addColorStop(0.5, `rgba(90, 0, 200, ${pulse * 0.55})`);
+  surfGlow.addColorStop(0.8, `rgba(55, 0, 130, ${pulse * 0.70})`);
+  surfGlow.addColorStop(1,   'rgba(10,0,20,1)');
+  ctx.fillStyle = surfGlow;
+  ctx.fillRect(0, poolY - glowH, W, glowH * 1.5);
 
-  // Faint reflections clipped to pool area
-  ctx.save();
-  ctx.beginPath(); ctx.rect(0, poolY, W, H - poolY); ctx.clip();
-  ctx.translate(0, 2 * poolY); ctx.scale(1, -1);
-  ctx.globalAlpha = 0.20;
-  for (let i = 0; i < FLUID_N; i++) {
-    drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i] * 0.5, poolY, spaceW);
-  }
-  ctx.restore();
-
-  // Pool surface — purple shimmer line, flares on bass
-  ctx.globalAlpha = 0.45 + bass * 0.40;
-  const sv = Math.round(65 + bass * 85);
-  ctx.strokeStyle = `rgb(${sv}, ${Math.round(sv * 0.08)}, ${Math.min(255, Math.round(sv * 2.2))})`;
+  // Pool surface shimmer — purple, pops on bass
+  const sv = Math.round(70 + bass * 100);
+  ctx.globalAlpha = 0.55 + bass * 0.40;
+  ctx.strokeStyle = `rgb(${sv}, 0, ${Math.min(255, sv * 2)})`;
   ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, poolY); ctx.lineTo(W, poolY); ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // Glow pass — purple bloom around spikes via shadowBlur
-  ctx.shadowColor = `rgba(105, 0, 215, ${0.55 + bass * 0.45})`;
-  ctx.shadowBlur  = 9 + bass * 22;
+  // Glow pass — purple bloom around spikes
+  ctx.shadowColor = `rgba(110, 0, 220, ${0.60 + bass * 0.40})`;
+  ctx.shadowBlur  = 10 + bass * 18;
   for (let i = 0; i < FLUID_N; i++) {
     drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i], poolY, spaceW);
   }
   ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
 
-  // Sharp metallic detail pass — crisp specular on top of glow
+  // Sharp metallic pass — crisp specular on top of glow
   for (let i = 0; i < FLUID_N; i++) {
     drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i], poolY, spaceW);
   }
@@ -853,15 +853,19 @@ function loop(ts) {
   updateAudioValues();
   updateProgressUI();
 
-  switch (currentMode) {
-    case 0: renderMandala();     break;
-    case 1: renderEmojiWaves();  break;
-    case 2: renderEmojiVortex(); break;
-    case 3: renderBlob(t);       break;
-    case 4: renderHypnoRings();  break;
-    case 5: renderSpiralRings(); break;
-    case 6: renderSubwoofer();   break;
-    case 7: renderFluid();       break;
+  try {
+    switch (currentMode) {
+      case 0: renderMandala();     break;
+      case 1: renderEmojiWaves();  break;
+      case 2: renderEmojiVortex(); break;
+      case 3: renderBlob(t);       break;
+      case 4: renderHypnoRings();  break;
+      case 5: renderSpiralRings(); break;
+      case 6: renderSubwoofer();   break;
+      case 7: renderFluid();       break;
+    }
+  } catch (e) {
+    console.error('[loop] render error:', e);
   }
 
   requestAnimationFrame(loop);
