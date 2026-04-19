@@ -681,112 +681,122 @@ function renderBlob(t) {
 
 let ringSpeed = 1.0;
 
-// ── Mode 7: Oobleck Fluid ─────────────────────────────────────────────────────
+// ── Mode 7: Ferrofluid ───────────────────────────────────────────────────────
+// Discrete spindle spikes rising from a dark glossy pool, lit from upper-left.
+// Center spikes = bass bins; edge spikes = high-mid bins (mirrored spectrum).
 
-const FLUID_N      = 64;   // spikes per half; mirrored → 128 surface pts
-const fluidSpikes  = new Float32Array(FLUID_N);  // current rendered heights
-const fluidTargets = new Float32Array(FLUID_N);  // targets from FFT
-const fluidVels    = new Float32Array(FLUID_N);  // spring velocities
-const _fluidPts    = Array.from({ length: FLUID_N * 2 }, () => ({ x: 0, y: 0 }));
+const FLUID_N      = 24;
+const fluidSpikes  = new Float32Array(FLUID_N);
+const fluidTargets = new Float32Array(FLUID_N);
+const fluidVels    = new Float32Array(FLUID_N);
 
-let fluidSpikeHeight = 0.55;  // max spike height as fraction of H
-let fluidStiffness   = 0.18;  // spring stiffness base
-let fluidBlobSize    = 1.0;   // blob radius multiplier
+let fluidSpikeHeight = 0.55;
+let fluidStiffness   = 0.18;
+let fluidBlobSize    = 1.0;   // specular highlight brightness (0 = matte)
 
 function updateFluidTargets() {
+  const half = FLUID_N >> 1;    // 12 — spikes per side
   const maxH = H * fluidSpikeHeight;
   for (let i = 0; i < FLUID_N; i++) {
-    fluidTargets[i] = (frequencyData[i] / 255) * maxH;
+    // side 0 = center (bass bin 0); side 11 = edge (bin ~60)
+    const side = i < half ? half - 1 - i : i - half;
+    const bin  = Math.round(side / (half - 1) * 60);
+    fluidTargets[i] = (frequencyData[Math.min(bin, frequencyData.length - 1)] / 255) * maxH;
   }
 }
 
 function updateFluidSprings() {
-  // High bass → stiff/snappy (oobleck solid). Low bass → soft/slow (liquid).
-  const k    = fluidStiffness * (0.2 + bass * 3.3);
-  const damp = 0.55 - bass * 0.42;  // 0.55 overdamped/liquid → 0.13 underdamped/rigid
+  const k    = fluidStiffness * (0.12 + bass * 2.8);
+  const damp = 0.60 - bass * 0.46;
   for (let i = 0; i < FLUID_N; i++) {
     fluidVels[i]   += (fluidTargets[i] - fluidSpikes[i]) * k;
-    fluidVels[i]   *= (1 - damp);
-    fluidSpikes[i] += fluidVels[i];
+    fluidVels[i]   *= (1 - Math.max(0.04, damp));
+    fluidSpikes[i]  = Math.max(0, fluidSpikes[i] + fluidVels[i]);
   }
 }
 
-function buildFluidPts(poolY) {
-  // Mirror: left half has sub-bass at edge → center, right half mirrors
-  const dx = W / (FLUID_N * 2 - 1);
-  for (let i = 0; i < FLUID_N * 2; i++) {
-    const bin       = i < FLUID_N ? FLUID_N - 1 - i : i - FLUID_N;
-    _fluidPts[i].x  = i * dx;
-    _fluidPts[i].y  = poolY - fluidSpikes[bin];
-  }
-}
-
-function drawFluidBody() {
-  // sharpness 0 = smooth catmull-rom (liquid), 1 = linear segments (rigid)
-  const sharpness = Math.pow(bass, 0.6);
-  const n = _fluidPts.length;
-  const T = 0.5;  // Catmull-Rom tension
+// Spindle/lozenge shape: narrow at base, bulges in middle, sharp tip.
+// Horizontal gradient gives cylindrical metallic sheen (lit from upper-left).
+function drawFerroSpike(cx, spikeH, poolY, spaceW) {
+  if (spikeH < 3) return;
+  const tipY = poolY - spikeH;
+  const mw   = Math.min(spaceW * 0.40, spikeH * 0.30);   // max half-width
+  const bw   = mw * 0.18;                                   // base half-width
+  const bulY = tipY + spikeH * 0.42;                        // widest point
 
   ctx.beginPath();
-  ctx.moveTo(0, H);
-  ctx.lineTo(0, _fluidPts[0].y);
-
-  for (let i = 0; i < n - 1; i++) {
-    const p0 = _fluidPts[Math.max(0, i - 1)];
-    const p1 = _fluidPts[i];
-    const p2 = _fluidPts[i + 1];
-    const p3 = _fluidPts[Math.min(n - 1, i + 2)];
-
-    // Catmull-Rom → Bezier control points (smooth)
-    const bx1 = p1.x + (p2.x - p0.x) * T / 3;
-    const by1 = p1.y + (p2.y - p0.y) * T / 3;
-    const bx2 = p2.x - (p3.x - p1.x) * T / 3;
-    const by2 = p2.y - (p3.y - p1.y) * T / 3;
-    // Collapsed CPs that produce a straight segment
-    const lx1 = p1.x + (p2.x - p1.x) / 3;
-    const ly1 = p1.y;
-    const lx2 = p1.x + (p2.x - p1.x) * 2 / 3;
-    const ly2 = p2.y;
-
-    ctx.bezierCurveTo(
-      bx1 + (lx1 - bx1) * sharpness, by1 + (ly1 - by1) * sharpness,
-      bx2 + (lx2 - bx2) * sharpness, by2 + (ly2 - by2) * sharpness,
-      p2.x, p2.y
-    );
-  }
-
-  ctx.lineTo(W, H);
+  ctx.moveTo(cx, tipY);
+  ctx.bezierCurveTo(cx + mw * 0.16, tipY + spikeH * 0.13,  cx + mw, bulY,  cx + bw, poolY);
+  ctx.lineTo(cx - bw, poolY);
+  ctx.bezierCurveTo(cx - mw, bulY,  cx - mw * 0.16, tipY + spikeH * 0.13,  cx, tipY);
   ctx.closePath();
-  ctx.fillStyle = '#000';
-  ctx.fill();
-}
 
-function drawSpikeBlobs() {
-  const threshold = 0.12 * H * fluidSpikeHeight;
-  const path = new Path2D();
-  let any = false;
-  for (let i = 0; i < _fluidPts.length; i++) {
-    const bin = i < FLUID_N ? FLUID_N - 1 - i : i - FLUID_N;
-    const h   = fluidSpikes[bin];
-    if (h < threshold) continue;
-    const r = (4 + h * 0.06 + bass * 18) * fluidBlobSize;
-    path.arc(_fluidPts[i].x, _fluidPts[i].y, r, 0, Math.PI * 2);
-    any = true;
-  }
-  if (any) { ctx.fillStyle = '#000'; ctx.fill(path); }
+  const hi   = Math.min(255, Math.round(215 * fluidBlobSize));
+  const grad = ctx.createLinearGradient(cx - mw, 0, cx + mw, 0);
+  grad.addColorStop(0.00, 'rgba(38,8,58,1)');             // purple-dark left
+  grad.addColorStop(0.22, `rgba(${hi},${hi},${hi},1)`);   // white specular peak
+  grad.addColorStop(0.48, 'rgba(14,3,26,1)');             // purple-dark shadow
+  grad.addColorStop(1.00, 'rgba(3,0,8,1)');               // near-black right
+  ctx.fillStyle = grad;
+  ctx.fill();
 }
 
 function renderFluid() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-  ctx.fillStyle = '#fff';
+
+  // Deep dark background, slight purple undertone
+  ctx.fillStyle = '#080010';
   ctx.fillRect(0, 0, W, H);
 
-  const poolY = H * 0.82;
+  const poolY  = H * 0.80;
+  const spaceW = W / FLUID_N;
+
   updateFluidTargets();
   updateFluidSprings();
-  buildFluidPts(poolY);
-  drawFluidBody();
-  if (fluidBlobSize > 0) drawSpikeBlobs();
+
+  // Pool fill
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, poolY, W, H - poolY);
+
+  // Purple radial glow from pool surface — pulses hard on bass
+  const pulse = 0.28 + bass * 0.52;
+  const glow  = ctx.createRadialGradient(W / 2, poolY, 0, W / 2, poolY, W * 0.62);
+  glow.addColorStop(0,   `rgba(110, 0, 220, ${pulse})`);
+  glow.addColorStop(0.4, `rgba(55, 0, 130, ${pulse * 0.45})`);
+  glow.addColorStop(1,   'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // Faint reflections clipped to pool area
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, poolY, W, H - poolY); ctx.clip();
+  ctx.translate(0, 2 * poolY); ctx.scale(1, -1);
+  ctx.globalAlpha = 0.20;
+  for (let i = 0; i < FLUID_N; i++) {
+    drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i] * 0.5, poolY, spaceW);
+  }
+  ctx.restore();
+
+  // Pool surface — purple shimmer line, flares on bass
+  ctx.globalAlpha = 0.45 + bass * 0.40;
+  const sv = Math.round(65 + bass * 85);
+  ctx.strokeStyle = `rgb(${sv}, ${Math.round(sv * 0.08)}, ${Math.min(255, Math.round(sv * 2.2))})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, poolY); ctx.lineTo(W, poolY); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Glow pass — purple bloom around spikes via shadowBlur
+  ctx.shadowColor = `rgba(105, 0, 215, ${0.55 + bass * 0.45})`;
+  ctx.shadowBlur  = 9 + bass * 22;
+  for (let i = 0; i < FLUID_N; i++) {
+    drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i], poolY, spaceW);
+  }
+  ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+
+  // Sharp metallic detail pass — crisp specular on top of glow
+  for (let i = 0; i < FLUID_N; i++) {
+    drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i], poolY, spaceW);
+  }
 }
 
 // ─── Mode routing ─────────────────────────────────────────────────────────────
