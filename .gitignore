@@ -4,3 +4,12 @@ music/*.flac
 music/*.wav
 music/*.ogg
 music/*.aac
+
+# Secrets — never commit
+.env
+.env.local
+secrets/
+*.p8
+
+node_modules/
+.DS_Store

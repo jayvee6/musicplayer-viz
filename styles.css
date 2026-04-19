@@ -475,6 +475,165 @@ body {
   color: rgba(255,255,255,0.3);
 }
 
+/* ─── Sign-in (bottom-left, mirrors #ui-buttons) ─────────────────── */
+
+#sign-in-buttons {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  gap: 8px;
+  z-index: 200;
+  transition: opacity 0.28s ease;
+}
+#sign-in-buttons.all-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#signin-btn {
+  position: relative;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#signin-btn .signin-icon { font-size: 14px; line-height: 1; }
+#signin-btn .signin-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+  transition: background 0.2s;
+}
+#signin-btn.authed .signin-dot {
+  background: #1ed760;
+  border-color: #fff;
+  box-shadow: 0 0 6px rgba(30, 215, 96, 0.75);
+}
+#signin-btn.open { background: rgba(255, 255, 255, 0.18); color: #fff; }
+
+#streaming-menu {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  background: rgba(18, 18, 18, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+  z-index: 10;
+}
+#streaming-menu.open { display: block; }
+
+#streaming-sources { display: flex; gap: 6px; margin-bottom: 8px; }
+.stream-src-btn {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.7);
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.stream-src-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.stream-src-btn.active {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  border-color: rgba(255,255,255,0.28);
+}
+
+#streaming-auth {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+#streaming-connect {
+  background: rgba(30, 215, 96, 0.18);
+  border: 1px solid rgba(30, 215, 96, 0.4);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+#streaming-connect:hover { background: rgba(30, 215, 96, 0.3); }
+#streaming-auth-status {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#streaming-hint {
+  margin: 4px 2px 0;
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  line-height: 1.45;
+}
+#streaming-hint strong { color: rgba(255,255,255,0.85); font-weight: 600; }
+
+/* ─── iPod menu (library browser) ───────────────────────────────── */
+
+#ipod-view-menu { background: #c8d8b8; }
+#ipod-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  background: #c8d8b8;
+}
+.ipod-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #1c1c1c;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.ipod-menu-item.selected {
+  background: linear-gradient(180deg, #6c9ffb 0%, #2a5fd0 100%);
+  color: #fff;
+}
+.ipod-menu-item .ipod-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ipod-menu-item .ipod-item-chev {
+  color: rgba(0,0,0,0.3);
+  font-size: 14px;
+}
+.ipod-menu-item.selected .ipod-item-chev { color: rgba(255,255,255,0.7); }
+.ipod-menu-note {
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(0,0,0,0.45);
+  font-style: italic;
+}
+.ipod-menu-note.error { color: #b00020; font-style: normal; }
+
 /* ─── Transport controls (grid center column — always centered) ── */
 
 #transport {

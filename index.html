@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+  <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" data-web-components async></script>
 </head>
 <body>
   <canvas id="canvas-2d"></canvas>
@@ -96,6 +97,25 @@
 
   </div>
 
+  <!-- ── Sign-in (bottom-left, mirrors #ui-buttons) ──────── -->
+  <div id="sign-in-buttons">
+    <button class="ui-btn" id="signin-btn" title="Music accounts">
+      <span class="signin-icon">👤</span>
+      <span class="signin-dot"></span>
+    </button>
+    <div id="streaming-menu">
+      <div id="streaming-sources">
+        <button class="stream-src-btn active" data-src="spotify">Spotify</button>
+        <button class="stream-src-btn" data-src="apple">Apple Music</button>
+      </div>
+      <div id="streaming-auth">
+        <button id="streaming-connect">Connect</button>
+        <span id="streaming-auth-status">Not connected</span>
+      </div>
+      <p id="streaming-hint">Once connected, open the <strong>iPod</strong> to browse your library.</p>
+    </div>
+  </div>
+
   <!-- ── Utility buttons (bottom-right) ──────────────────── -->
   <div id="ui-buttons">
     <button class="ui-btn" id="btn-ipod" title="iPod mode">🎵</button>
@@ -109,10 +129,16 @@
     <div class="ipod-screen-bezel">
       <div class="ipod-screen">
 
-        <!-- No track loaded -->
+        <!-- Not connected to any streaming source -->
         <div class="screen-view" id="ipod-view-empty">
           <div class="screen-titlebar">Music Visualizer</div>
-          <div class="ipod-empty">Load a track<br>to begin</div>
+          <div class="ipod-empty">Connect a music<br>account to browse<br>your library</div>
+        </div>
+
+        <!-- Library menu (Playlists / Artists / Albums / Songs, drill-down) -->
+        <div class="screen-view hidden" id="ipod-view-menu">
+          <div class="screen-titlebar" id="ipod-menu-title">iPod</div>
+          <ul id="ipod-menu-list"></ul>
         </div>
 
         <!-- Now playing -->
@@ -141,6 +167,11 @@
 
   </div>
 
+  <script src="music-source.js"></script>
+  <script src="spotify-auth.js"></script>
+  <script src="spotify-source.js"></script>
+  <script src="apple-auth.js"></script>
+  <script src="apple-source.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

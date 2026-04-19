@@ -29,7 +29,7 @@ const bassHistory = new Array(BASS_HISTORY_LEN).fill(0);
 function initAudio() {
   audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
   analyser   = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
+  analyser.fftSize = 2048;
   analyser.smoothingTimeConstant = 0.8;
   frequencyData = new Uint8Array(analyser.frequencyBinCount);
   analyser.connect(audioCtx.destination);
@@ -783,9 +783,9 @@ let ringSpeed = 1.0;
 
 // ── Mode 7: Ferrofluid ───────────────────────────────────────────────────────
 // Discrete spindle spikes rising from a dark glossy pool, lit from upper-left.
-// Center spikes = bass bins; edge spikes = high-mid bins (mirrored spectrum).
+// Left = sub-bass (log-scale), right = high treble.  One connected fluid mass.
 
-const FLUID_N      = 32;
+const FLUID_N      = 48;
 const fluidSpikes  = new Float32Array(FLUID_N);
 const fluidTargets = new Float32Array(FLUID_N);
 const fluidVels    = new Float32Array(FLUID_N);
@@ -793,14 +793,18 @@ const fluidVels    = new Float32Array(FLUID_N);
 let fluidSpikeHeight = 0.55;
 let fluidStiffness   = 0.18;
 let fluidBlobSize    = 1.0;   // specular highlight brightness (0 = matte)
+let fluidHue         = 280;   // current hue — drifts + snaps on bass hits
 
 function updateFluidTargets() {
+  // Hue: slow ambient drift + hard bass-kick → Daft Punk light-show feel
+  fluidHue = (fluidHue + 0.06 + bass * 1.8) % 360;
+
   const maxH  = H * fluidSpikeHeight;
   const idleH = H * 0.06;
   const now   = performance.now() / 1000;
   for (let i = 0; i < FLUID_N; i++) {
-    // Linear left→right: spike 0 = sub-bass (bin 0), spike 23 = high treble (bin 80)
-    const bin    = Math.round(i / (FLUID_N - 1) * 80);
+    // Log-scale left→right: spike 0 ≈ 21Hz (bin 1), spike 47 ≈ 10.7kHz (bin 500)
+    const bin    = Math.round(Math.pow(500, i / (FLUID_N - 1)));
     const energy = frequencyData
       ? (frequencyData[Math.min(bin, frequencyData.length - 1)] / 255) * maxH
       : 0;
@@ -848,7 +852,8 @@ function drawFerroSpike(cx, spikeH, poolY, spaceW) {
 
 function renderFluid() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-  ctx.fillStyle = '#06000e';
+  const fH = fluidHue;  // snapshot hue for this frame
+  ctx.fillStyle = `hsl(${fH}, 40%, 3%)`;  // deep tinted black
   ctx.fillRect(0, 0, W, H);
 
   const poolY  = H * 0.80;
@@ -864,7 +869,8 @@ function renderFluid() {
   for (let v = 0; v <= FLUID_N; v++) {
     const hL = v > 0       ? fluidSpikes[v - 1] : 0;
     const hR = v < FLUID_N ? fluidSpikes[v]     : 0;
-    _vY[v] = poolY - (hL + hR) * 0.13;  // valley rises ~26% of avg neighbour
+    // Raised saddle: surface stays elevated between spikes → one connected mass
+    _vY[v] = poolY - (hL + hR) * 0.30;
   }
 
   ctx.beginPath();
@@ -875,48 +881,48 @@ function renderFluid() {
     const cx   = (i + 0.5) * spaceW;
     const h    = fluidSpikes[i];
     const tipY = poolY - h;
-    const hw   = spaceW * 0.47;              // wider base — nearly touching
-    const sp   = Math.max(3, h * 0.072);     // larger = wider mid-section
+    const hw   = spaceW * 0.49;              // wide base — nearly merging
+    const sp   = Math.max(1.5, h * 0.038);   // small = sharp tip
     const vY_L = _vY[i];
     const vY_R = _vY[i + 1];
 
-    ctx.bezierCurveTo(cx - hw, vY_L, cx - sp, tipY + sp * 2, cx, tipY);
-    ctx.bezierCurveTo(cx + sp, tipY + sp * 2, cx + hw, vY_R,
+    ctx.bezierCurveTo(cx - hw, vY_L, cx - sp, tipY + sp, cx, tipY);
+    ctx.bezierCurveTo(cx + sp, tipY + sp, cx + hw, vY_R,
       Math.min(W, (i + 1) * spaceW), vY_R);
   }
 
   ctx.lineTo(W, H);
   ctx.closePath();
 
-  // Oily body: deep black with subtle mid-grey lift so spikes read as 3D mass
+  // Oily body: dark with subtle hue tint so spikes catch the colored light
   const bodyGrad = ctx.createLinearGradient(0, 0, 0, poolY);
-  bodyGrad.addColorStop(0,   '#1a1a1a');
-  bodyGrad.addColorStop(0.5, '#0f0f0f');
-  bodyGrad.addColorStop(1,   '#080808');
+  bodyGrad.addColorStop(0,   `hsl(${fH}, 25%, 10%)`);
+  bodyGrad.addColorStop(0.5, `hsl(${fH}, 20%, 6%)`);
+  bodyGrad.addColorStop(1,   `hsl(${fH}, 15%, 3%)`);
   ctx.fillStyle = bodyGrad;
   ctx.fill();
 
-  // ── Purple surface glow (pool region only, not above spikes) ─────────────
+  // ── Surface glow (pool region only) — full saturation, hue-driven ────────
   const pulse    = 0.40 + bass * 0.55;
   const glowH    = H * 0.22;
   const poolGlow = ctx.createLinearGradient(0, poolY - glowH, 0, poolY + glowH * 0.5);
   poolGlow.addColorStop(0,    'rgba(0,0,0,0)');
-  poolGlow.addColorStop(0.50, `rgba(80, 0, 185, ${pulse * 0.45})`);
-  poolGlow.addColorStop(0.82, `rgba(50, 0, 120, ${pulse * 0.60})`);
-  poolGlow.addColorStop(1,    'rgba(8,0,16,1)');
+  poolGlow.addColorStop(0.50, `hsla(${fH}, 100%, 36%, ${pulse * 0.50})`);
+  poolGlow.addColorStop(0.82, `hsla(${fH}, 100%, 22%, ${pulse * 0.65})`);
+  poolGlow.addColorStop(1,    `hsl(${fH}, 40%, 3%)`);
   ctx.fillStyle = poolGlow;
   ctx.fillRect(0, poolY - glowH, W, glowH * 1.5);
 
   // Pool surface shimmer
-  const sv = Math.round(65 + bass * 105);
-  ctx.globalAlpha = 0.55 + bass * 0.40;
-  ctx.strokeStyle = `rgb(${sv}, 0, ${Math.min(255, sv * 2)})`;
-  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.60 + bass * 0.38;
+  ctx.strokeStyle = `hsl(${fH}, 100%, ${30 + bass * 38}%)`;
+  ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(0, poolY); ctx.lineTo(W, poolY); ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // ── Specular highlights — oily gloss streak on left face of each spike ──────
-  const hiB = Math.min(255, Math.round(230 * fluidBlobSize));
+  // ── Specular highlights — colored gloss streak on left face of each spike ──
+  // Tip = near-white tinted by hue (like light reflecting off a colored surface)
+  const hiL = Math.round(88 * fluidBlobSize);   // tip lightness %
   ctx.lineCap = 'round';
   for (let i = 0; i < FLUID_N; i++) {
     const h = fluidSpikes[i];
@@ -927,8 +933,8 @@ function renderFluid() {
     const hx   = cx - Math.min(spaceW * 0.12, h * 0.065);
 
     const hlGrad = ctx.createLinearGradient(0, tipY, 0, tipY + hLen);
-    hlGrad.addColorStop(0,    `rgba(${hiB},${hiB},${hiB},0.97)`);
-    hlGrad.addColorStop(0.35, `rgba(${Math.round(hiB*0.55)},${Math.round(hiB*0.55)},${Math.round(hiB*0.55)},0.42)`);
+    hlGrad.addColorStop(0,    `hsla(${fH}, 60%, ${hiL}%, 0.97)`);
+    hlGrad.addColorStop(0.35, `hsla(${fH}, 80%, ${Math.round(hiL * 0.55)}%, 0.42)`);
     hlGrad.addColorStop(1,    'rgba(0,0,0,0)');
     ctx.strokeStyle = hlGrad;
     ctx.lineWidth   = Math.max(1.5, Math.min(h * 0.026, 6));
@@ -938,15 +944,15 @@ function renderFluid() {
     ctx.stroke();
   }
 
-  // Oily pool reflection — subtle inverted gloss in the flat area below spikes
-  ctx.globalAlpha = 0.18 + bass * 0.12;
+  // Oily pool reflection — tinted inverted gloss in the flat area below spikes
+  ctx.globalAlpha = 0.22 + bass * 0.14;
   for (let i = 0; i < FLUID_N; i++) {
     const h = fluidSpikes[i];
     if (h < 12) continue;
     const cx    = (i + 0.5) * spaceW;
     const rLen  = Math.min(h * 0.25, H * 0.06);
     const refGr = ctx.createLinearGradient(0, poolY, 0, poolY + rLen);
-    refGr.addColorStop(0,   `rgba(${hiB},${hiB},${hiB},0.5)`);
+    refGr.addColorStop(0,   `hsla(${fH}, 80%, 75%, 0.5)`);
     refGr.addColorStop(1,   'rgba(0,0,0,0)');
     const hx = cx - Math.min(spaceW * 0.12, h * 0.065);
     ctx.strokeStyle = refGr;
@@ -958,11 +964,39 @@ function renderFluid() {
   }
   ctx.globalAlpha = 1;
 
-  // ── Purple bloom behind tallest spikes on bass hits ───────────────────────
+  // ── Smooth envelope curve through all spike tips (EQ response line) ─────
+  {
+    const T = 0.38; // Catmull-Rom tension
+    const tX = j => (j + 0.5) * spaceW;
+    const tY = j => poolY - fluidSpikes[Math.max(0, Math.min(FLUID_N - 1, j))];
+
+    ctx.beginPath();
+    ctx.moveTo(tX(0), tY(0));
+    for (let i = 0; i < FLUID_N - 1; i++) {
+      const p0x = tX(i - 1), p0y = tY(i - 1);
+      const p1x = tX(i),     p1y = tY(i);
+      const p2x = tX(i + 1), p2y = tY(i + 1);
+      const p3x = tX(i + 2), p3y = tY(i + 2);
+      const cp1x = p1x + (p2x - p0x) * T / 3;
+      const cp1y = p1y + (p2y - p0y) * T / 3;
+      const cp2x = p2x - (p3x - p1x) * T / 3;
+      const cp2y = p2y - (p3y - p1y) * T / 3;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2x, p2y);
+    }
+    const envAlpha = 0.35 + bass * 0.55;
+    ctx.shadowColor = `hsla(${fH}, 100%, 50%, ${bass * 0.9})`;
+    ctx.shadowBlur  = 3 + bass * 12;
+    ctx.strokeStyle = `hsla(${fH}, 100%, 70%, ${envAlpha})`;
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    ctx.shadowBlur  = 0; ctx.shadowColor = 'transparent';
+  }
+
+  // ── Color bloom behind tallest spikes on bass hits ────────────────────────
   if (bass > 0.07) {
-    ctx.shadowColor = `rgba(110, 0, 220, ${bass * 0.80})`;
-    ctx.shadowBlur  = bass * 22;
-    ctx.strokeStyle = `rgba(100, 0, 205, ${bass * 0.65})`;
+    ctx.shadowColor = `hsla(${fH}, 100%, 50%, ${bass * 0.85})`;
+    ctx.shadowBlur  = bass * 28;
+    ctx.strokeStyle = `hsla(${fH}, 100%, 55%, ${bass * 0.70})`;
     ctx.lineWidth   = 2;
     for (let i = 0; i < FLUID_N; i++) {
       const h = fluidSpikes[i];
@@ -1585,15 +1619,24 @@ document.getElementById('btn-hide').addEventListener('click', () => {
   setControlsHidden(!controlsHidden);
 });
 
-// Auto-hide ui-buttons after 3s of mouse inactivity (screensaver mode)
+// Auto-hide utility clusters after 3s of mouse inactivity (screensaver mode)
+const signInButtons = document.getElementById('sign-in-buttons');
 function resetHideTimer() {
   uiButtons.style.opacity = '1';
   uiButtons.style.pointerEvents = 'all';
+  if (signInButtons) {
+    signInButtons.style.opacity = '1';
+    signInButtons.style.pointerEvents = 'all';
+  }
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     if (controlsHidden) {
       uiButtons.style.opacity = '0';
       uiButtons.style.pointerEvents = 'none';
+      if (signInButtons) {
+        signInButtons.style.opacity = '0';
+        signInButtons.style.pointerEvents = 'none';
+      }
     }
   }, 3000);
 }
@@ -1703,24 +1746,33 @@ document.addEventListener('mouseup', () => {
 
 // ─── Streaming accounts (auth only; library browsing lives in the iPod) ──────
 
-const streamingBtn    = document.getElementById('streaming-btn');
-const streamingMenu   = document.getElementById('streaming-menu');
+const streamingBtn     = document.getElementById('signin-btn');
+const streamingMenu    = document.getElementById('streaming-menu');
 const streamingConnect = document.getElementById('streaming-connect');
-const streamingStatus = document.getElementById('streaming-auth-status');
+const streamingStatus  = document.getElementById('streaming-auth-status');
 
 function currentStreamingSource() {
   return window.MusicSources && window.MusicSources.current();
+}
+
+function anySourceAuthed() {
+  if (!window.MusicSources) return false;
+  return window.MusicSources.list().some(s => {
+    const src = window.MusicSources.get(s.key);
+    return src && src.isAuthed();
+  });
 }
 
 function refreshStreamingAuthUI() {
   const src = currentStreamingSource();
   if (!src) {
     streamingStatus.textContent = 'Select a service';
-    return;
+  } else {
+    const authed = src.isAuthed();
+    streamingStatus.textContent  = authed ? `Connected to ${src.displayName}` : 'Not connected';
+    streamingConnect.textContent = authed ? 'Reconnect' : `Connect ${src.displayName}`;
   }
-  const authed = src.isAuthed();
-  streamingStatus.textContent  = authed ? `Connected to ${src.displayName}` : 'Not connected';
-  streamingConnect.textContent = authed ? 'Reconnect' : `Connect ${src.displayName}`;
+  streamingBtn.classList.toggle('authed', anySourceAuthed());
   syncIPodView();
 }
 
