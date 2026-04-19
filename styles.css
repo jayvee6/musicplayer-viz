@@ -586,7 +586,8 @@ body {
 }
 
 #vortex-controls,
-#waves-controls {
+#waves-controls,
+#fluid-controls {
   display: none;
   width: 100%;
   align-items: center;
@@ -595,7 +596,8 @@ body {
 }
 
 #vortex-controls.visible,
-#waves-controls.visible {
+#waves-controls.visible,
+#fluid-controls.visible {
   display: flex;
   animation: sliders-in 0.22s ease;
 }

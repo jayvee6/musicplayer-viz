@@ -681,6 +681,114 @@ function renderBlob(t) {
 
 let ringSpeed = 1.0;
 
+// ── Mode 7: Oobleck Fluid ─────────────────────────────────────────────────────
+
+const FLUID_N      = 64;   // spikes per half; mirrored → 128 surface pts
+const fluidSpikes  = new Float32Array(FLUID_N);  // current rendered heights
+const fluidTargets = new Float32Array(FLUID_N);  // targets from FFT
+const fluidVels    = new Float32Array(FLUID_N);  // spring velocities
+const _fluidPts    = Array.from({ length: FLUID_N * 2 }, () => ({ x: 0, y: 0 }));
+
+let fluidSpikeHeight = 0.55;  // max spike height as fraction of H
+let fluidStiffness   = 0.18;  // spring stiffness base
+let fluidBlobSize    = 1.0;   // blob radius multiplier
+
+function updateFluidTargets() {
+  const maxH = H * fluidSpikeHeight;
+  for (let i = 0; i < FLUID_N; i++) {
+    fluidTargets[i] = (frequencyData[i] / 255) * maxH;
+  }
+}
+
+function updateFluidSprings() {
+  // High bass → stiff/snappy (oobleck solid). Low bass → soft/slow (liquid).
+  const k    = fluidStiffness * (0.2 + bass * 3.3);
+  const damp = 0.55 - bass * 0.42;  // 0.55 overdamped/liquid → 0.13 underdamped/rigid
+  for (let i = 0; i < FLUID_N; i++) {
+    fluidVels[i]   += (fluidTargets[i] - fluidSpikes[i]) * k;
+    fluidVels[i]   *= (1 - damp);
+    fluidSpikes[i] += fluidVels[i];
+  }
+}
+
+function buildFluidPts(poolY) {
+  // Mirror: left half has sub-bass at edge → center, right half mirrors
+  const dx = W / (FLUID_N * 2 - 1);
+  for (let i = 0; i < FLUID_N * 2; i++) {
+    const bin       = i < FLUID_N ? FLUID_N - 1 - i : i - FLUID_N;
+    _fluidPts[i].x  = i * dx;
+    _fluidPts[i].y  = poolY - fluidSpikes[bin];
+  }
+}
+
+function drawFluidBody() {
+  // sharpness 0 = smooth catmull-rom (liquid), 1 = linear segments (rigid)
+  const sharpness = Math.pow(bass, 0.6);
+  const n = _fluidPts.length;
+  const T = 0.5;  // Catmull-Rom tension
+
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(0, _fluidPts[0].y);
+
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = _fluidPts[Math.max(0, i - 1)];
+    const p1 = _fluidPts[i];
+    const p2 = _fluidPts[i + 1];
+    const p3 = _fluidPts[Math.min(n - 1, i + 2)];
+
+    // Catmull-Rom → Bezier control points (smooth)
+    const bx1 = p1.x + (p2.x - p0.x) * T / 3;
+    const by1 = p1.y + (p2.y - p0.y) * T / 3;
+    const bx2 = p2.x - (p3.x - p1.x) * T / 3;
+    const by2 = p2.y - (p3.y - p1.y) * T / 3;
+    // Collapsed CPs that produce a straight segment
+    const lx1 = p1.x + (p2.x - p1.x) / 3;
+    const ly1 = p1.y;
+    const lx2 = p1.x + (p2.x - p1.x) * 2 / 3;
+    const ly2 = p2.y;
+
+    ctx.bezierCurveTo(
+      bx1 + (lx1 - bx1) * sharpness, by1 + (ly1 - by1) * sharpness,
+      bx2 + (lx2 - bx2) * sharpness, by2 + (ly2 - by2) * sharpness,
+      p2.x, p2.y
+    );
+  }
+
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fillStyle = '#000';
+  ctx.fill();
+}
+
+function drawSpikeBlobs() {
+  const threshold = 0.12 * H * fluidSpikeHeight;
+  const path = new Path2D();
+  let any = false;
+  for (let i = 0; i < _fluidPts.length; i++) {
+    const bin = i < FLUID_N ? FLUID_N - 1 - i : i - FLUID_N;
+    const h   = fluidSpikes[bin];
+    if (h < threshold) continue;
+    const r = (4 + h * 0.06 + bass * 18) * fluidBlobSize;
+    path.arc(_fluidPts[i].x, _fluidPts[i].y, r, 0, Math.PI * 2);
+    any = true;
+  }
+  if (any) { ctx.fillStyle = '#000'; ctx.fill(path); }
+}
+
+function renderFluid() {
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, W, H);
+
+  const poolY = H * 0.82;
+  updateFluidTargets();
+  updateFluidSprings();
+  buildFluidPts(poolY);
+  drawFluidBody();
+  if (fluidBlobSize > 0) drawSpikeBlobs();
+}
+
 // ─── Mode routing ─────────────────────────────────────────────────────────────
 
 let currentMode = 0;
@@ -693,6 +801,7 @@ function setMode(mode) {
   document.getElementById('webgl-container').style.display = is3D ? 'block' : 'none';
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
   document.getElementById('waves-controls').classList.toggle('visible', mode === 1);
+  document.getElementById('fluid-controls').classList.toggle('visible', mode === 7);
 
   document.getElementById('speed-control').style.display = hasSpeed ? 'flex' : 'none';
 
@@ -742,6 +851,7 @@ function loop(ts) {
     case 4: renderHypnoRings();  break;
     case 5: renderSpiralRings(); break;
     case 6: renderSubwoofer();   break;
+    case 7: renderFluid();       break;
   }
 
   requestAnimationFrame(loop);
@@ -871,6 +981,16 @@ document.getElementById('ripple-slider').addEventListener('input', e => {
 
 document.getElementById('ripple-speed-slider').addEventListener('input', e => {
   rippleStepSize = +e.target.value;
+});
+
+document.getElementById('fluid-height-slider').addEventListener('input', e => {
+  fluidSpikeHeight = e.target.value / 100;
+});
+document.getElementById('fluid-stiff-slider').addEventListener('input', e => {
+  fluidStiffness = e.target.value / 100;
+});
+document.getElementById('fluid-blob-slider').addEventListener('input', e => {
+  fluidBlobSize = e.target.value / 10;
 });
 
 let albumArtUrl = null;  // tracks current object URL so prior one can be revoked
