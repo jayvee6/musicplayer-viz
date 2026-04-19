@@ -3,12 +3,24 @@
 const EMOJIS = ['🐻','🦊','🦁','🐱','🐶','🐼','🤖','🐲','🦄','🐷','🐰','🐵'];
 
 // ─── Audio engine ─────────────────────────────────────────────────────────────
+// Supports two playback modes behind a shared interface so the analyser pipeline
+// doesn't care whether audio came from a local file (AudioBuffer path) or a
+// streaming-service preview URL (<audio> + MediaElementSource path).
 
 let audioCtx, analyser, sourceNode, audioBuffer;
 let frequencyData;
 let isPlaying = false;
 let startTime = 0;
 let pauseOffset = 0;
+
+// Element-mode state — one shared <audio> + MediaElementSource created lazily.
+// createMediaElementSource() can only be called once per element, so we reuse
+// this single element for all streaming-source track swaps.
+let streamAudio = null;
+let streamMediaSource = null;
+
+// 'buffer' = AudioBuffer path; 'element' = <audio> path; null = nothing loaded.
+let sourceMode = null;
 
 let bass = 0, mid = 0, treble = 0;
 const BASS_HISTORY_LEN = 16;
@@ -21,6 +33,36 @@ function initAudio() {
   analyser.smoothingTimeConstant = 0.8;
   frequencyData = new Uint8Array(analyser.frequencyBinCount);
   analyser.connect(audioCtx.destination);
+}
+
+function ensureStreamAudio() {
+  if (streamAudio) return;
+  if (!audioCtx) initAudio();
+  streamAudio = new Audio();
+  streamAudio.crossOrigin = 'anonymous';
+  streamAudio.preload     = 'auto';
+  streamAudio.addEventListener('ended', () => { isPlaying = false; syncPlayBtn(); });
+  streamMediaSource = audioCtx.createMediaElementSource(streamAudio);
+  streamMediaSource.connect(analyser);
+}
+
+// Unified queries used by progress UI, seek handlers, and has-track checks.
+function hasTrack() {
+  return sourceMode === 'buffer' ? !!audioBuffer
+       : sourceMode === 'element' ? !!(streamAudio && streamAudio.src)
+       : false;
+}
+
+function trackDuration() {
+  if (sourceMode === 'buffer')  return audioBuffer ? audioBuffer.duration : 0;
+  if (sourceMode === 'element') return (streamAudio && isFinite(streamAudio.duration)) ? streamAudio.duration : 0;
+  return 0;
+}
+
+function currentPosSec() {
+  if (sourceMode === 'buffer') return isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
+  if (sourceMode === 'element' && streamAudio) return streamAudio.currentTime;
+  return 0;
 }
 
 function setTransportEnabled(on) {
@@ -47,34 +89,90 @@ function setTrackDisplayName(text) {
   }));
 }
 
+// When switching sources, stop the other path so we don't have two streams
+// feeding the analyser simultaneously.
+function stopOtherMode(nextMode) {
+  if (nextMode !== 'buffer' && sourceNode) {
+    try { sourceNode.stop(); } catch {}
+    sourceNode = null;
+    audioBuffer = null;
+  }
+  if (nextMode !== 'element' && streamAudio && !streamAudio.paused) {
+    streamAudio.pause();
+  }
+  isPlaying = false;
+}
+
 function loadAudio(file) {
+  stopOtherMode('buffer');
   const reader = new FileReader();
   reader.onload = e => {
     audioCtx.decodeAudioData(e.target.result, buf => {
       audioBuffer = buf;
+      sourceMode  = 'buffer';
+      pauseOffset = 0;
       setTransportEnabled(true);
     });
   };
   reader.readAsArrayBuffer(file);
 }
 
+function loadStreamUrl(url, meta) {
+  if (!audioCtx) initAudio();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  stopOtherMode('element');
+  ensureStreamAudio();
+  streamAudio.src = url;
+  streamAudio.load();
+  sourceMode  = 'element';
+  pauseOffset = 0;
+  setTransportEnabled(true);
+  if (meta) {
+    setTrackDisplayName(meta.displayName || '');
+    document.getElementById('ipod-track-name').textContent = meta.displayName || '';
+    const artEl = document.getElementById('album-art');
+    const ipodArt = document.getElementById('ipod-art');
+    if (meta.albumArt) {
+      artEl.src = meta.albumArt; artEl.style.display = 'block';
+      ipodArt.src = meta.albumArt; ipodArt.style.display = 'block';
+    } else {
+      artEl.style.display = 'none';
+      ipodArt.style.display = 'none';
+    }
+  }
+  syncIPodView();
+}
+
 function play() {
-  if (!audioBuffer) return;
-  if (sourceNode) { sourceNode.disconnect(); }
-  sourceNode = audioCtx.createBufferSource();
-  sourceNode.buffer = audioBuffer;
-  sourceNode.connect(analyser);
-  sourceNode.loop = true;
-  sourceNode.start(0, pauseOffset % audioBuffer.duration);
-  startTime = audioCtx.currentTime - pauseOffset;
-  isPlaying = true;
+  if (!hasTrack()) return;
+  if (sourceMode === 'buffer') {
+    if (sourceNode) { try { sourceNode.disconnect(); } catch {} }
+    sourceNode = audioCtx.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(analyser);
+    sourceNode.loop = true;
+    sourceNode.start(0, pauseOffset % audioBuffer.duration);
+    startTime = audioCtx.currentTime - pauseOffset;
+    isPlaying = true;
+  } else if (sourceMode === 'element') {
+    streamAudio.play().then(() => { isPlaying = true; syncPlayBtn(); }).catch(e => {
+      console.error('[stream play]', e);
+    });
+    isPlaying = true;
+  }
 }
 
 function pause() {
-  if (!sourceNode) return;
-  pauseOffset = (audioCtx.currentTime - startTime) % audioBuffer.duration;
-  sourceNode.stop();
-  isPlaying = false;
+  if (sourceMode === 'buffer') {
+    if (!sourceNode) return;
+    pauseOffset = (audioCtx.currentTime - startTime) % audioBuffer.duration;
+    try { sourceNode.stop(); } catch {}
+    isPlaying = false;
+  } else if (sourceMode === 'element') {
+    if (!streamAudio) return;
+    streamAudio.pause();
+    isPlaying = false;
+  }
 }
 
 function updateAudioValues() {
@@ -695,18 +793,15 @@ let fluidStiffness   = 0.18;
 let fluidBlobSize    = 1.0;   // specular highlight brightness (0 = matte)
 
 function updateFluidTargets() {
-  const half  = FLUID_N >> 1;    // 12 — spikes per side
   const maxH  = H * fluidSpikeHeight;
-  const idleH = H * 0.06;        // minimum resting height — always visible
+  const idleH = H * 0.06;
   const now   = performance.now() / 1000;
   for (let i = 0; i < FLUID_N; i++) {
-    // side 0 = center (bass bin 0); side 11 = edge (bin ~60)
-    const side   = i < half ? half - 1 - i : i - half;
-    const bin    = Math.round(side / (half - 1) * 60);
+    // Linear left→right: spike 0 = sub-bass (bin 0), spike 23 = high treble (bin 80)
+    const bin    = Math.round(i / (FLUID_N - 1) * 80);
     const energy = frequencyData
       ? (frequencyData[Math.min(bin, frequencyData.length - 1)] / 255) * maxH
       : 0;
-    // Gentle idle oscillation ensures spikes are visible even without audio
     const idle   = idleH * (0.4 + 0.6 * Math.sin(now * 0.7 + i * 0.52));
     fluidTargets[i] = Math.max(idle, energy);
   }
@@ -751,9 +846,7 @@ function drawFerroSpike(cx, spikeH, poolY, spaceW) {
 
 function renderFluid() {
   ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
-
-  // Deep dark background, slight purple undertone
-  ctx.fillStyle = '#080010';
+  ctx.fillStyle = '#06000e';
   ctx.fillRect(0, 0, W, H);
 
   const poolY  = H * 0.80;
@@ -762,40 +855,104 @@ function renderFluid() {
   updateFluidTargets();
   updateFluidSprings();
 
-  // Pool fill
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, poolY, W, H - poolY);
+  // ── Single connected fluid body ───────────────────────────────────────────
+  // Each spike: two bezier arcs (left flank valley→tip, right flank tip→valley).
+  // Adjacent spikes share the same valley point → no gaps, one polygon.
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(0, poolY);   // left wall up to pool surface
 
-  // Purple glow hugging the pool surface — does NOT cover spike area
-  const pulse     = 0.35 + bass * 0.55;
-  const glowH     = H * 0.22;   // only covers region around pool line
-  const surfGlow  = ctx.createLinearGradient(0, poolY - glowH, 0, poolY + glowH * 0.5);
-  surfGlow.addColorStop(0,   'rgba(0,0,0,0)');
-  surfGlow.addColorStop(0.5, `rgba(90, 0, 200, ${pulse * 0.55})`);
-  surfGlow.addColorStop(0.8, `rgba(55, 0, 130, ${pulse * 0.70})`);
-  surfGlow.addColorStop(1,   'rgba(10,0,20,1)');
-  ctx.fillStyle = surfGlow;
+  for (let i = 0; i < FLUID_N; i++) {
+    const cx   = (i + 0.5) * spaceW;
+    const h    = fluidSpikes[i];
+    const tipY = poolY - h;
+    const hw   = spaceW * 0.44;              // horizontal reach of base CPs
+    const sp   = Math.max(2, h * 0.055);     // sharpness: CP offset near tip
+
+    // Left flank: (prev valley) → tip — stays flat then rockets up
+    ctx.bezierCurveTo(
+      cx - hw,       poolY,           // CP1: depart valley horizontally
+      cx - sp,       tipY + sp * 2,   // CP2: arrive at tip steeply
+      cx,            tipY             // spike tip
+    );
+    // Right flank: tip → (next valley) — drops steeply then levels off
+    ctx.bezierCurveTo(
+      cx + sp,       tipY + sp * 2,   // CP1: leave tip steeply
+      cx + hw,       poolY,           // CP2: arrive at valley horizontally
+      Math.min(W, (i + 1) * spaceW),  // next valley x
+      poolY
+    );
+  }
+
+  ctx.lineTo(W, H);
+  ctx.closePath();
+
+  // Dark body — very slightly lighter at top so depth is visible
+  const bodyGrad = ctx.createLinearGradient(0, 0, 0, poolY);
+  bodyGrad.addColorStop(0,   '#151515');
+  bodyGrad.addColorStop(0.7, '#0e0e0e');
+  bodyGrad.addColorStop(1,   '#090909');
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  // ── Purple surface glow (pool region only, not above spikes) ─────────────
+  const pulse    = 0.40 + bass * 0.55;
+  const glowH    = H * 0.22;
+  const poolGlow = ctx.createLinearGradient(0, poolY - glowH, 0, poolY + glowH * 0.5);
+  poolGlow.addColorStop(0,    'rgba(0,0,0,0)');
+  poolGlow.addColorStop(0.50, `rgba(80, 0, 185, ${pulse * 0.45})`);
+  poolGlow.addColorStop(0.82, `rgba(50, 0, 120, ${pulse * 0.60})`);
+  poolGlow.addColorStop(1,    'rgba(8,0,16,1)');
+  ctx.fillStyle = poolGlow;
   ctx.fillRect(0, poolY - glowH, W, glowH * 1.5);
 
-  // Pool surface shimmer — purple, pops on bass
-  const sv = Math.round(70 + bass * 100);
+  // Pool surface shimmer
+  const sv = Math.round(65 + bass * 105);
   ctx.globalAlpha = 0.55 + bass * 0.40;
   ctx.strokeStyle = `rgb(${sv}, 0, ${Math.min(255, sv * 2)})`;
   ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, poolY); ctx.lineTo(W, poolY); ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // Glow pass — purple bloom around spikes
-  ctx.shadowColor = `rgba(110, 0, 220, ${0.60 + bass * 0.40})`;
-  ctx.shadowBlur  = 10 + bass * 18;
+  // ── Specular highlight strokes — bright streak down left face of each spike
+  const hiB = Math.min(255, Math.round(215 * fluidBlobSize));
+  ctx.lineCap = 'round';
   for (let i = 0; i < FLUID_N; i++) {
-    drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i], poolY, spaceW);
-  }
-  ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+    const h = fluidSpikes[i];
+    if (h < 10) continue;
+    const cx   = (i + 0.5) * spaceW;
+    const tipY = poolY - h;
+    const hLen = h * 0.60;
+    const hx   = cx - Math.min(spaceW * 0.13, h * 0.07);
 
-  // Sharp metallic pass — crisp specular on top of glow
-  for (let i = 0; i < FLUID_N; i++) {
-    drawFerroSpike((i + 0.5) * spaceW, fluidSpikes[i], poolY, spaceW);
+    const hlGrad = ctx.createLinearGradient(0, tipY, 0, tipY + hLen);
+    hlGrad.addColorStop(0,    `rgba(${hiB},${hiB},${hiB},0.95)`);
+    hlGrad.addColorStop(0.42, `rgba(${Math.round(hiB * 0.5)},${Math.round(hiB * 0.5)},${Math.round(hiB * 0.5)},0.38)`);
+    hlGrad.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.strokeStyle = hlGrad;
+    ctx.lineWidth   = Math.max(1.5, Math.min(h * 0.024, 5.5));
+    ctx.beginPath();
+    ctx.moveTo(cx, tipY + 1);
+    ctx.bezierCurveTo(hx, tipY + h * 0.20, hx - 2, tipY + h * 0.42, hx - 3, tipY + hLen);
+    ctx.stroke();
+  }
+
+  // ── Purple bloom behind tallest spikes on bass hits ───────────────────────
+  if (bass > 0.07) {
+    ctx.shadowColor = `rgba(110, 0, 220, ${bass * 0.80})`;
+    ctx.shadowBlur  = bass * 22;
+    ctx.strokeStyle = `rgba(100, 0, 205, ${bass * 0.65})`;
+    ctx.lineWidth   = 2;
+    for (let i = 0; i < FLUID_N; i++) {
+      const h = fluidSpikes[i];
+      if (h < 15) continue;
+      const cx = (i + 0.5) * spaceW;
+      ctx.beginPath();
+      ctx.moveTo(cx, poolY - h);
+      ctx.lineTo(cx, poolY - h * 0.5);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   }
 }
 
@@ -830,11 +987,11 @@ function fmt(s) {
 }
 
 function updateProgressUI() {
-  if (!audioBuffer) return;
-  const dur = audioBuffer.duration;
-  const cur = isPlaying
-    ? (audioCtx.currentTime - startTime) % dur
-    : pauseOffset % dur;
+  if (!hasTrack()) return;
+  const dur = trackDuration();
+  if (!dur) return;
+  const raw = currentPosSec();
+  const cur = sourceMode === 'buffer' ? raw % dur : Math.min(raw, dur);
   const pct = `${(cur / dur) * 100}%`;
   document.getElementById('progress-fill').style.width = pct;
   document.getElementById('track-time').textContent    = `${fmt(cur)} / ${fmt(dur)}`;
@@ -917,10 +1074,17 @@ const progressWrap = document.getElementById('progress-wrap');
 const scrubHead    = document.getElementById('scrub-head');
 
 progressWrap.addEventListener('click', e => {
-  if (!audioBuffer) return;
+  if (!hasTrack()) return;
+  const dur  = trackDuration();
+  if (!dur) return;
   const rect = e.currentTarget.getBoundingClientRect();
-  pauseOffset = ((e.clientX - rect.left) / rect.width) * audioBuffer.duration;
-  if (isPlaying) play(); // seekBy not used here — absolute position, not delta
+  const t    = ((e.clientX - rect.left) / rect.width) * dur;
+  if (sourceMode === 'buffer') {
+    pauseOffset = t;
+    if (isPlaying) play();
+  } else if (sourceMode === 'element') {
+    streamAudio.currentTime = t;
+  }
 });
 
 progressWrap.addEventListener('mouseenter', () => {
@@ -940,13 +1104,20 @@ function syncPlayBtn() {
 }
 
 function currentPos() {
-  return isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
+  return currentPosSec();
 }
 
 function seekBy(delta) {
-  if (!audioBuffer) return;
-  pauseOffset = Math.max(0, Math.min(audioBuffer.duration, currentPos() + delta));
-  if (isPlaying) play();
+  if (!hasTrack()) return;
+  const dur = trackDuration();
+  if (!dur) return;
+  const next = Math.max(0, Math.min(dur, currentPosSec() + delta));
+  if (sourceMode === 'buffer') {
+    pauseOffset = next;
+    if (isPlaying) play();
+  } else if (sourceMode === 'element') {
+    streamAudio.currentTime = next;
+  }
 }
 
 function togglePlayback() {
@@ -1018,11 +1189,14 @@ let   currentTrackName = null;
 function loadTrackFromUrl(url, displayName) {
   if (!audioCtx) initAudio();
   if (audioCtx.state === 'suspended') audioCtx.resume();
+  stopOtherMode('buffer');
 
   fetch(url)
     .then(r => r.arrayBuffer())
     .then(buf => audioCtx.decodeAudioData(buf, decoded => {
       audioBuffer = decoded;
+      sourceMode  = 'buffer';
+      pauseOffset = 0;
       setTransportEnabled(true);
       currentTrackName = displayName;
       renderPlaylistMenu(); // update playing highlight
@@ -1115,9 +1289,9 @@ const ipodOverlay = document.getElementById('ipod-overlay');
 let ipodVisible   = false;
 
 function syncIPodView() {
-  const hasTrack = !!audioBuffer;
-  document.getElementById('ipod-view-empty').classList.toggle('hidden', hasTrack);
-  document.getElementById('ipod-view-nowplaying').classList.toggle('hidden', !hasTrack);
+  const has = hasTrack();
+  document.getElementById('ipod-view-empty').classList.toggle('hidden', has);
+  document.getElementById('ipod-view-nowplaying').classList.toggle('hidden', !has);
 }
 
 function showIPod() {
@@ -1280,6 +1454,124 @@ document.addEventListener('mouseup', () => {
   controlsEl.classList.remove('dragging');
   savePillPos();
 });
+
+// ─── Streaming sources (Spotify + Apple Music) ───────────────────────────────
+
+const streamingBtn    = document.getElementById('streaming-btn');
+const streamingMenu   = document.getElementById('streaming-menu');
+const streamingConnect = document.getElementById('streaming-connect');
+const streamingStatus = document.getElementById('streaming-auth-status');
+const streamingSearch = document.getElementById('streaming-search');
+const streamingResults = document.getElementById('streaming-results');
+
+let streamingSearchDebounce = null;
+
+function currentStreamingSource() {
+  return window.MusicSources && window.MusicSources.current();
+}
+
+function refreshStreamingAuthUI() {
+  const src = currentStreamingSource();
+  if (!src) {
+    streamingStatus.textContent = 'Select a service';
+    streamingSearch.disabled = true;
+    return;
+  }
+  const authed = src.isAuthed();
+  streamingStatus.textContent = authed ? `Connected to ${src.displayName}` : `Not connected`;
+  streamingConnect.textContent = authed ? 'Reconnect' : `Connect ${src.displayName}`;
+  streamingSearch.disabled = !authed;
+  if (!authed) streamingResults.innerHTML = '';
+}
+
+function renderStreamingResults(tracks) {
+  streamingResults.innerHTML = '';
+  if (!tracks.length) {
+    streamingResults.innerHTML = '<li class="streaming-empty">No results</li>';
+    return;
+  }
+  tracks.forEach(t => {
+    const li = document.createElement('li');
+    li.classList.toggle('no-preview', !t.previewUrl);
+    const label = `${t.artists} — ${t.name}`;
+    li.innerHTML = `
+      <span class="streaming-title">${label.replace(/</g, '&lt;')}</span>
+      ${t.previewUrl ? '' : '<span class="streaming-badge">No preview</span>'}
+    `;
+    li.addEventListener('click', () => {
+      if (!t.previewUrl) return;
+      loadStreamUrl(t.previewUrl, { displayName: label, albumArt: t.albumArt });
+      play();
+      syncPlayBtn();
+      closeStreaming();
+    });
+    streamingResults.appendChild(li);
+  });
+}
+
+async function runStreamingSearch(query) {
+  const src = currentStreamingSource();
+  if (!src || !src.isAuthed()) return;
+  try {
+    const results = await src.search(query);
+    renderStreamingResults(results);
+  } catch (e) {
+    console.error('[streaming search]', e);
+    streamingResults.innerHTML = `<li class="streaming-empty">Search failed: ${e.message}</li>`;
+  }
+}
+
+function openStreaming() {
+  streamingBtn.classList.add('open');
+  streamingMenu.classList.add('open');
+  refreshStreamingAuthUI();
+}
+
+function closeStreaming() {
+  streamingBtn.classList.remove('open');
+  streamingMenu.classList.remove('open');
+}
+
+streamingBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  streamingMenu.classList.contains('open') ? closeStreaming() : openStreaming();
+});
+
+document.addEventListener('click', e => {
+  if (!streamingMenu.contains(e.target) && e.target !== streamingBtn) closeStreaming();
+});
+
+document.querySelectorAll('.stream-src-btn').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    document.querySelectorAll('.stream-src-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    window.MusicSources.setCurrent(btn.dataset.src);
+    refreshStreamingAuthUI();
+  });
+});
+
+streamingConnect.addEventListener('click', e => {
+  e.stopPropagation();
+  const src = currentStreamingSource();
+  if (src) src.connect();
+});
+
+streamingSearch.addEventListener('input', e => {
+  clearTimeout(streamingSearchDebounce);
+  const q = e.target.value.trim();
+  if (!q) { streamingResults.innerHTML = ''; return; }
+  streamingSearchDebounce = setTimeout(() => runStreamingSearch(q), 250);
+});
+
+// Initialize default source + consume Spotify OAuth redirect if we landed here with ?code=...
+(async () => {
+  if (window.MusicSources) window.MusicSources.setCurrent('spotify');
+  if (window.SpotifyAuth) {
+    await window.SpotifyAuth.handleRedirectIfPresent();
+  }
+  refreshStreamingAuthUI();
+})();
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
