@@ -111,6 +111,7 @@ function loadAudio(file) {
       audioBuffer = buf;
       sourceMode  = 'buffer';
       pauseOffset = 0;
+      if (typeof ipodMode !== 'undefined') ipodMode = 'now';
       setTransportEnabled(true);
     });
   };
@@ -126,6 +127,7 @@ function loadStreamUrl(url, meta) {
   streamAudio.load();
   sourceMode  = 'element';
   pauseOffset = 0;
+  if (typeof ipodMode !== 'undefined') ipodMode = 'now';
   setTransportEnabled(true);
   if (meta) {
     setTrackDisplayName(meta.displayName || '');
@@ -783,7 +785,7 @@ let ringSpeed = 1.0;
 // Discrete spindle spikes rising from a dark glossy pool, lit from upper-left.
 // Center spikes = bass bins; edge spikes = high-mid bins (mirrored spectrum).
 
-const FLUID_N      = 24;
+const FLUID_N      = 32;
 const fluidSpikes  = new Float32Array(FLUID_N);
 const fluidTargets = new Float32Array(FLUID_N);
 const fluidVels    = new Float32Array(FLUID_N);
@@ -856,42 +858,41 @@ function renderFluid() {
   updateFluidSprings();
 
   // ── Single connected fluid body ───────────────────────────────────────────
-  // Each spike: two bezier arcs (left flank valley→tip, right flank tip→valley).
-  // Adjacent spikes share the same valley point → no gaps, one polygon.
+  // Valleys between spikes rise proportionally to neighbours so the mass stays
+  // connected — no harsh gaps. hw close to 0.5*spaceW = bases nearly merge.
+  const _vY = new Float32Array(FLUID_N + 1);
+  for (let v = 0; v <= FLUID_N; v++) {
+    const hL = v > 0       ? fluidSpikes[v - 1] : 0;
+    const hR = v < FLUID_N ? fluidSpikes[v]     : 0;
+    _vY[v] = poolY - (hL + hR) * 0.13;  // valley rises ~26% of avg neighbour
+  }
+
   ctx.beginPath();
   ctx.moveTo(0, H);
-  ctx.lineTo(0, poolY);   // left wall up to pool surface
+  ctx.lineTo(0, _vY[0]);
 
   for (let i = 0; i < FLUID_N; i++) {
     const cx   = (i + 0.5) * spaceW;
     const h    = fluidSpikes[i];
     const tipY = poolY - h;
-    const hw   = spaceW * 0.44;              // horizontal reach of base CPs
-    const sp   = Math.max(2, h * 0.055);     // sharpness: CP offset near tip
+    const hw   = spaceW * 0.47;              // wider base — nearly touching
+    const sp   = Math.max(3, h * 0.072);     // larger = wider mid-section
+    const vY_L = _vY[i];
+    const vY_R = _vY[i + 1];
 
-    // Left flank: (prev valley) → tip — stays flat then rockets up
-    ctx.bezierCurveTo(
-      cx - hw,       poolY,           // CP1: depart valley horizontally
-      cx - sp,       tipY + sp * 2,   // CP2: arrive at tip steeply
-      cx,            tipY             // spike tip
-    );
-    // Right flank: tip → (next valley) — drops steeply then levels off
-    ctx.bezierCurveTo(
-      cx + sp,       tipY + sp * 2,   // CP1: leave tip steeply
-      cx + hw,       poolY,           // CP2: arrive at valley horizontally
-      Math.min(W, (i + 1) * spaceW),  // next valley x
-      poolY
-    );
+    ctx.bezierCurveTo(cx - hw, vY_L, cx - sp, tipY + sp * 2, cx, tipY);
+    ctx.bezierCurveTo(cx + sp, tipY + sp * 2, cx + hw, vY_R,
+      Math.min(W, (i + 1) * spaceW), vY_R);
   }
 
   ctx.lineTo(W, H);
   ctx.closePath();
 
-  // Dark body — very slightly lighter at top so depth is visible
+  // Oily body: deep black with subtle mid-grey lift so spikes read as 3D mass
   const bodyGrad = ctx.createLinearGradient(0, 0, 0, poolY);
-  bodyGrad.addColorStop(0,   '#151515');
-  bodyGrad.addColorStop(0.7, '#0e0e0e');
-  bodyGrad.addColorStop(1,   '#090909');
+  bodyGrad.addColorStop(0,   '#1a1a1a');
+  bodyGrad.addColorStop(0.5, '#0f0f0f');
+  bodyGrad.addColorStop(1,   '#080808');
   ctx.fillStyle = bodyGrad;
   ctx.fill();
 
@@ -914,28 +915,48 @@ function renderFluid() {
   ctx.beginPath(); ctx.moveTo(0, poolY); ctx.lineTo(W, poolY); ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // ── Specular highlight strokes — bright streak down left face of each spike
-  const hiB = Math.min(255, Math.round(215 * fluidBlobSize));
+  // ── Specular highlights — oily gloss streak on left face of each spike ──────
+  const hiB = Math.min(255, Math.round(230 * fluidBlobSize));
   ctx.lineCap = 'round';
   for (let i = 0; i < FLUID_N; i++) {
     const h = fluidSpikes[i];
-    if (h < 10) continue;
+    if (h < 8) continue;
     const cx   = (i + 0.5) * spaceW;
     const tipY = poolY - h;
-    const hLen = h * 0.60;
-    const hx   = cx - Math.min(spaceW * 0.13, h * 0.07);
+    const hLen = h * 0.65;
+    const hx   = cx - Math.min(spaceW * 0.12, h * 0.065);
 
     const hlGrad = ctx.createLinearGradient(0, tipY, 0, tipY + hLen);
-    hlGrad.addColorStop(0,    `rgba(${hiB},${hiB},${hiB},0.95)`);
-    hlGrad.addColorStop(0.42, `rgba(${Math.round(hiB * 0.5)},${Math.round(hiB * 0.5)},${Math.round(hiB * 0.5)},0.38)`);
+    hlGrad.addColorStop(0,    `rgba(${hiB},${hiB},${hiB},0.97)`);
+    hlGrad.addColorStop(0.35, `rgba(${Math.round(hiB*0.55)},${Math.round(hiB*0.55)},${Math.round(hiB*0.55)},0.42)`);
     hlGrad.addColorStop(1,    'rgba(0,0,0,0)');
     ctx.strokeStyle = hlGrad;
-    ctx.lineWidth   = Math.max(1.5, Math.min(h * 0.024, 5.5));
+    ctx.lineWidth   = Math.max(1.5, Math.min(h * 0.026, 6));
     ctx.beginPath();
     ctx.moveTo(cx, tipY + 1);
     ctx.bezierCurveTo(hx, tipY + h * 0.20, hx - 2, tipY + h * 0.42, hx - 3, tipY + hLen);
     ctx.stroke();
   }
+
+  // Oily pool reflection — subtle inverted gloss in the flat area below spikes
+  ctx.globalAlpha = 0.18 + bass * 0.12;
+  for (let i = 0; i < FLUID_N; i++) {
+    const h = fluidSpikes[i];
+    if (h < 12) continue;
+    const cx    = (i + 0.5) * spaceW;
+    const rLen  = Math.min(h * 0.25, H * 0.06);
+    const refGr = ctx.createLinearGradient(0, poolY, 0, poolY + rLen);
+    refGr.addColorStop(0,   `rgba(${hiB},${hiB},${hiB},0.5)`);
+    refGr.addColorStop(1,   'rgba(0,0,0,0)');
+    const hx = cx - Math.min(spaceW * 0.12, h * 0.065);
+    ctx.strokeStyle = refGr;
+    ctx.lineWidth   = Math.max(1, Math.min(h * 0.018, 4));
+    ctx.beginPath();
+    ctx.moveTo(cx, poolY - 1);
+    ctx.bezierCurveTo(hx, poolY + rLen * 0.4, hx - 1, poolY + rLen * 0.8, hx - 2, poolY + rLen);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 
   // ── Purple bloom behind tallest spikes on bass hits ───────────────────────
   if (bass > 0.07) {
@@ -1197,6 +1218,7 @@ function loadTrackFromUrl(url, displayName) {
       audioBuffer = decoded;
       sourceMode  = 'buffer';
       pauseOffset = 0;
+      if (typeof ipodMode !== 'undefined') ipodMode = 'now';
       setTransportEnabled(true);
       currentTrackName = displayName;
       renderPlaylistMenu(); // update playing highlight
@@ -1283,15 +1305,185 @@ document.addEventListener('click', e => {
 });
 
 // ─── iPod overlay ─────────────────────────────────────────────────────────────
+// Three views (exactly one visible):
+//   empty  — no streaming account connected
+//   menu   — library navigator (Playlists / Artists / Albums / Songs, drill-down)
+//   now    — current track + progress
+// A connected streaming source shows the menu; the Now Playing view is pushed
+// onto the nav stack when a song is selected. MENU pops the stack, eventually
+// back to the root menu.
 
 const controlsEl  = document.getElementById('controls');
 const ipodOverlay = document.getElementById('ipod-overlay');
-let ipodVisible   = false;
+const ipodViewEmpty      = document.getElementById('ipod-view-empty');
+const ipodViewMenu       = document.getElementById('ipod-view-menu');
+const ipodViewNowPlaying = document.getElementById('ipod-view-nowplaying');
+const ipodMenuList       = document.getElementById('ipod-menu-list');
+const ipodMenuTitle      = document.getElementById('ipod-menu-title');
+let ipodVisible = false;
+
+// Nav stack: each frame = { title, items, selectedIdx, loading, error }.
+// Last frame is the visible menu level. An empty stack means "show root menu",
+// which is lazy-initialized on open.
+const ROOT_MENU = [
+  { id: 'playlists', name: 'Playlists', kind: 'category' },
+  { id: 'artists',   name: 'Artists',   kind: 'category' },
+  { id: 'albums',    name: 'Albums',    kind: 'category' },
+  { id: 'songs',     name: 'Songs',     kind: 'category' },
+];
+
+let ipodStack    = [];  // [{title, items, selectedIdx, loading, error}]
+let ipodMode     = 'menu';  // 'menu' | 'now'
+
+function currentFrame() { return ipodStack[ipodStack.length - 1] || null; }
+
+function setIPodView(which) {
+  ipodViewEmpty.classList.toggle('hidden',      which !== 'empty');
+  ipodViewMenu.classList.toggle('hidden',       which !== 'menu');
+  ipodViewNowPlaying.classList.toggle('hidden', which !== 'now');
+}
 
 function syncIPodView() {
-  const has = hasTrack();
-  document.getElementById('ipod-view-empty').classList.toggle('hidden', has);
-  document.getElementById('ipod-view-nowplaying').classList.toggle('hidden', !has);
+  const src    = currentStreamingSource();
+  const authed = src && src.isAuthed();
+
+  if (ipodMode === 'now' && hasTrack()) { setIPodView('now'); return; }
+  if (authed) {
+    if (ipodStack.length === 0) {
+      ipodStack.push({ title: src.displayName, items: ROOT_MENU, selectedIdx: 0 });
+    }
+    ipodMode = 'menu';
+    renderIPodMenu();
+    setIPodView('menu');
+    return;
+  }
+  if (hasTrack()) { ipodMode = 'now'; setIPodView('now'); return; }
+  setIPodView('empty');
+}
+
+function renderIPodMenu() {
+  const frame = currentFrame();
+  if (!frame) { ipodMenuList.innerHTML = ''; return; }
+  ipodMenuTitle.textContent = frame.title;
+  ipodMenuList.innerHTML = '';
+
+  if (frame.loading) {
+    const li = document.createElement('li');
+    li.className = 'ipod-menu-note';
+    li.textContent = 'Loading…';
+    ipodMenuList.appendChild(li);
+    return;
+  }
+  if (frame.error) {
+    const li = document.createElement('li');
+    li.className = 'ipod-menu-note error';
+    li.textContent = frame.error;
+    ipodMenuList.appendChild(li);
+    return;
+  }
+  if (!frame.items.length) {
+    const li = document.createElement('li');
+    li.className = 'ipod-menu-note';
+    li.textContent = 'Empty';
+    ipodMenuList.appendChild(li);
+    return;
+  }
+
+  frame.items.forEach((it, idx) => {
+    const li = document.createElement('li');
+    li.className = 'ipod-menu-item' + (idx === frame.selectedIdx ? ' selected' : '');
+    const chev = (it.kind === 'category' || it.kind === 'playlist' || it.kind === 'artist' || it.kind === 'album') ? '›' : '';
+    li.innerHTML = `
+      <span class="ipod-item-name">${(it.name || '').replace(/</g, '&lt;')}</span>
+      <span class="ipod-item-chev">${chev}</span>
+    `;
+    li.addEventListener('click', () => {
+      frame.selectedIdx = idx;
+      renderIPodMenu();
+      ipodActivate();
+    });
+    ipodMenuList.appendChild(li);
+  });
+
+  // Scroll selected into view.
+  const sel = ipodMenuList.querySelector('.ipod-menu-item.selected');
+  if (sel && typeof sel.scrollIntoView === 'function') {
+    sel.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+async function loadFrame(frame, loader) {
+  frame.loading = true;
+  frame.error = null;
+  frame.items = [];
+  renderIPodMenu();
+  try {
+    frame.items = await loader();
+  } catch (e) {
+    console.error('[ipod load]', e);
+    frame.error = e.message || 'Failed to load';
+  } finally {
+    frame.loading = false;
+    frame.selectedIdx = 0;
+    renderIPodMenu();
+  }
+}
+
+function ipodActivate() {
+  const frame = currentFrame();
+  if (!frame || !frame.items.length) return;
+  const it = frame.items[frame.selectedIdx];
+  const src = currentStreamingSource();
+
+  if (it.kind === 'category') {
+    const child = { title: it.name, items: [], selectedIdx: 0 };
+    ipodStack.push(child);
+    loadFrame(child, () => src.getLibrary(it.id));
+  } else if (it.kind === 'playlist' || it.kind === 'artist' || it.kind === 'album') {
+    const child = { title: it.name, items: [], selectedIdx: 0 };
+    ipodStack.push(child);
+    loadFrame(child, () => src.getChildren(it.kind, it.id));
+  } else if (it.kind === 'song') {
+    const track = it.track;
+    if (!track || !track.previewUrl) {
+      frame.error = 'No preview available for this song.';
+      renderIPodMenu();
+      return;
+    }
+    const displayName = `${track.artists} — ${track.name}`;
+    loadStreamUrl(track.previewUrl, { displayName, albumArt: track.albumArt });
+    play();
+    syncPlayBtn();
+    ipodMode = 'now';
+    setIPodView('now');
+  }
+}
+
+function ipodBack() {
+  if (ipodMode === 'now') {
+    ipodMode = 'menu';
+    syncIPodView();
+    return;
+  }
+  if (ipodStack.length > 1) {
+    ipodStack.pop();
+    renderIPodMenu();
+    return;
+  }
+  // At root — hide the overlay
+  hideIPod();
+}
+
+function ipodMoveSelection(delta) {
+  if (ipodMode === 'now') {
+    // Wheel scrolling during playback scrubs the track.
+    seekBy(delta > 0 ? +5 : -5);
+    return;
+  }
+  const frame = currentFrame();
+  if (!frame || !frame.items.length) return;
+  frame.selectedIdx = Math.max(0, Math.min(frame.items.length - 1, frame.selectedIdx + delta));
+  renderIPodMenu();
 }
 
 function showIPod() {
@@ -1313,15 +1505,69 @@ document.getElementById('btn-ipod').addEventListener('click', () => {
   ipodVisible ? hideIPod() : showIPod();
 });
 
-// iPod MENU → back to controls
-document.querySelector('#ipod-wheel .wheel-menu').addEventListener('click', hideIPod);
+// MENU: back one frame (or hide if at root)
+document.querySelector('#ipod-wheel .wheel-menu').addEventListener('click', ipodBack);
 
-// iPod center → play / pause
-document.getElementById('ipod-center').addEventListener('click', togglePlayback);
+// Center: select (menu) or play/pause (now playing)
+document.getElementById('ipod-center').addEventListener('click', () => {
+  if (ipodMode === 'now') togglePlayback();
+  else                     ipodActivate();
+});
 
-// iPod forward/back → seek ±10 s
-document.querySelector('#ipod-wheel .wheel-forward').addEventListener('click', () => seekBy(+10));
-document.querySelector('#ipod-wheel .wheel-back').addEventListener('click',    () => seekBy(-10));
+// ⏮ / ⏭: scroll list (menu) or seek ±10s (now playing)
+document.querySelector('#ipod-wheel .wheel-forward').addEventListener('click', () => {
+  if (ipodMode === 'now') seekBy(+10);
+  else                     ipodMoveSelection(+1);
+});
+document.querySelector('#ipod-wheel .wheel-back').addEventListener('click', () => {
+  if (ipodMode === 'now') seekBy(-10);
+  else                     ipodMoveSelection(-1);
+});
+
+// Circular wheel drag → scroll selection. Accumulate angle deltas; every 22° = 1 step.
+(() => {
+  const wheel = document.getElementById('ipod-wheel');
+  let dragging = false;
+  let lastAngle = 0;
+  let accum = 0;
+  const STEP_DEG = 22;
+
+  function angleFromEvent(e) {
+    const r  = wheel.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top  + r.height / 2;
+    return Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+  }
+
+  wheel.addEventListener('mousedown', e => {
+    // Don't start a drag if the click landed on a wheel label or the center — those have their own handlers.
+    if (e.target.closest('.wheel-label') || e.target.id === 'ipod-center') return;
+    e.preventDefault();
+    dragging = true;
+    lastAngle = angleFromEvent(e);
+    accum = 0;
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const a = angleFromEvent(e);
+    let d = a - lastAngle;
+    // normalize to [-180, 180]
+    if (d >  180) d -= 360;
+    if (d < -180) d += 360;
+    accum += d;
+    lastAngle = a;
+    while (accum >=  STEP_DEG) { ipodMoveSelection(+1); accum -= STEP_DEG; }
+    while (accum <= -STEP_DEG) { ipodMoveSelection(-1); accum += STEP_DEG; }
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+// Mouse wheel over the iPod also scrolls the selection.
+ipodOverlay.addEventListener('wheel', e => {
+  if (!ipodVisible) return;
+  e.preventDefault();
+  ipodMoveSelection(e.deltaY > 0 ? +1 : -1);
+}, { passive: false });
 
 // ─── Hide controls + fullscreen ───────────────────────────────────────────────
 
@@ -1455,16 +1701,12 @@ document.addEventListener('mouseup', () => {
   savePillPos();
 });
 
-// ─── Streaming sources (Spotify + Apple Music) ───────────────────────────────
+// ─── Streaming accounts (auth only; library browsing lives in the iPod) ──────
 
 const streamingBtn    = document.getElementById('streaming-btn');
 const streamingMenu   = document.getElementById('streaming-menu');
 const streamingConnect = document.getElementById('streaming-connect');
 const streamingStatus = document.getElementById('streaming-auth-status');
-const streamingSearch = document.getElementById('streaming-search');
-const streamingResults = document.getElementById('streaming-results');
-
-let streamingSearchDebounce = null;
 
 function currentStreamingSource() {
   return window.MusicSources && window.MusicSources.current();
@@ -1474,51 +1716,12 @@ function refreshStreamingAuthUI() {
   const src = currentStreamingSource();
   if (!src) {
     streamingStatus.textContent = 'Select a service';
-    streamingSearch.disabled = true;
     return;
   }
   const authed = src.isAuthed();
-  streamingStatus.textContent = authed ? `Connected to ${src.displayName}` : `Not connected`;
+  streamingStatus.textContent  = authed ? `Connected to ${src.displayName}` : 'Not connected';
   streamingConnect.textContent = authed ? 'Reconnect' : `Connect ${src.displayName}`;
-  streamingSearch.disabled = !authed;
-  if (!authed) streamingResults.innerHTML = '';
-}
-
-function renderStreamingResults(tracks) {
-  streamingResults.innerHTML = '';
-  if (!tracks.length) {
-    streamingResults.innerHTML = '<li class="streaming-empty">No results</li>';
-    return;
-  }
-  tracks.forEach(t => {
-    const li = document.createElement('li');
-    li.classList.toggle('no-preview', !t.previewUrl);
-    const label = `${t.artists} — ${t.name}`;
-    li.innerHTML = `
-      <span class="streaming-title">${label.replace(/</g, '&lt;')}</span>
-      ${t.previewUrl ? '' : '<span class="streaming-badge">No preview</span>'}
-    `;
-    li.addEventListener('click', () => {
-      if (!t.previewUrl) return;
-      loadStreamUrl(t.previewUrl, { displayName: label, albumArt: t.albumArt });
-      play();
-      syncPlayBtn();
-      closeStreaming();
-    });
-    streamingResults.appendChild(li);
-  });
-}
-
-async function runStreamingSearch(query) {
-  const src = currentStreamingSource();
-  if (!src || !src.isAuthed()) return;
-  try {
-    const results = await src.search(query);
-    renderStreamingResults(results);
-  } catch (e) {
-    console.error('[streaming search]', e);
-    streamingResults.innerHTML = `<li class="streaming-empty">Search failed: ${e.message}</li>`;
-  }
+  syncIPodView();
 }
 
 function openStreaming() {
@@ -1555,13 +1758,6 @@ streamingConnect.addEventListener('click', e => {
   e.stopPropagation();
   const src = currentStreamingSource();
   if (src) src.connect();
-});
-
-streamingSearch.addEventListener('input', e => {
-  clearTimeout(streamingSearchDebounce);
-  const q = e.target.value.trim();
-  if (!q) { streamingResults.innerHTML = ''; return; }
-  streamingSearchDebounce = setTimeout(() => runStreamingSearch(q), 250);
 });
 
 // Initialize default source + consume Spotify OAuth redirect if we landed here with ?code=...
