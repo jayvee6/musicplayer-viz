@@ -8,6 +8,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" data-web-components async></script>
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
 </head>
 <body>
   <canvas id="canvas-2d"></canvas>
@@ -113,6 +114,15 @@
         <span id="streaming-auth-status">Not connected</span>
       </div>
       <p id="streaming-hint">Once connected, open the <strong>iPod</strong> to browse your library.</p>
+      <div id="viz-source">
+        <div class="viz-source-title">Reactive visuals</div>
+        <div class="viz-source-btns">
+          <button id="viz-capture-btn" class="viz-source-btn">Capture tab audio</button>
+          <button id="viz-ambient-btn" class="viz-source-btn">Ambient (120 BPM)</button>
+          <button id="viz-off-btn" class="viz-source-btn" hidden>Stop</button>
+        </div>
+        <div id="viz-source-status"></div>
+      </div>
     </div>
   </div>
 
@@ -169,9 +179,13 @@
 
   <script src="music-source.js"></script>
   <script src="spotify-auth.js"></script>
+  <script src="spotify-analysis.js"></script>
+  <script src="spotify-player.js"></script>
   <script src="spotify-source.js"></script>
   <script src="apple-auth.js"></script>
   <script src="apple-source.js"></script>
+  <script src="audio-capture.js"></script>
+  <script src="ambient-mode.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

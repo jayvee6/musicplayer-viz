@@ -1,18 +1,37 @@
+(() => {
 // Spotify Web API adapter — implements the MusicSource interface.
 // Requires window.SpotifyAuth (spotify-auth.js).
 
-async function apiGet(path) {
+async function apiFetch(path, { method = 'GET', body } = {}) {
   const token = await window.SpotifyAuth.getAccessToken();
   if (!token) throw new Error('Not authenticated with Spotify');
+
+  const headers = { Authorization: `Bearer ${token}` };
+  if (body) headers['Content-Type'] = 'application/json';
+
   const res = await fetch(`https://api.spotify.com/v1${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
   });
+
   if (res.status === 401) {
     window.SpotifyAuth.clearToken();
     throw new Error('Spotify token rejected — please reconnect.');
   }
-  if (!res.ok) throw new Error(`Spotify API ${res.status}`);
-  return res.json();
+  if (res.status === 403 && method === 'PUT' && path.startsWith('/me/player')) {
+    // 403 on player-control endpoints is almost always a non-Premium account.
+    throw new Error('Spotify Premium is required for full-track playback.');
+  }
+  if (!res.ok && res.status !== 204) {
+    let detail = '';
+    try {
+      const b = await res.json();
+      detail = (b && b.error && b.error.message) ? `: ${b.error.message}` : '';
+    } catch {}
+    throw new Error(`Spotify ${res.status}${detail}`);
+  }
+  return res.status === 204 ? null : res.json();
 }
 
 function pickAlbumArt(images) {
@@ -22,24 +41,26 @@ function pickAlbumArt(images) {
   return (mid || images[0]).url;
 }
 
-function mapTrack(item) {
+// If the caller has album art from a separate lookup (e.g. /albums/{id}/tracks
+// items don't embed album images), pass it via albumArtOverride.
+function mapTrack(item, { albumArtOverride } = {}) {
   return {
     id:           item.id,
     name:         item.name,
     artists:      (item.artists || []).map(a => a.name).join(', '),
-    albumArt:     pickAlbumArt(item.album && item.album.images),
+    albumArt:     albumArtOverride !== undefined ? albumArtOverride : pickAlbumArt(item.album && item.album.images),
     previewUrl:   item.preview_url || null,
     durationMs:   item.duration_ms || 0,
-    hasFullTrack: false, // Phase 2
+    hasFullTrack: true,
   };
 }
 
 async function search(query) {
   if (!query) return [];
   const params = new URLSearchParams({ q: query, type: 'track', limit: '20' });
-  const data = await apiGet(`/search?${params}`);
+  const data = await apiFetch(`/search?${params}`);
   const items = (data.tracks && data.tracks.items) || [];
-  return items.map(mapTrack);
+  return items.map(t => mapTrack(t));
 }
 
 // ─── Library browsing (for iPod overlay) ─────────────────────────────────────
@@ -88,20 +109,20 @@ function toSongItem(track) {
 async function getLibrary(category) {
   switch (category) {
     case 'playlists': {
-      const data = await apiGet('/me/playlists?limit=50');
+      const data = await apiFetch('/me/playlists?limit=50');
       return (data.items || []).map(mapPlaylist);
     }
     case 'artists': {
-      const data = await apiGet('/me/following?type=artist&limit=50');
+      const data = await apiFetch('/me/following?type=artist&limit=50');
       const items = (data.artists && data.artists.items) || [];
       return items.map(mapArtist);
     }
     case 'albums': {
-      const data = await apiGet('/me/albums?limit=50');
+      const data = await apiFetch('/me/albums?limit=50');
       return (data.items || []).map(w => mapAlbum(w.album));
     }
     case 'songs': {
-      const data = await apiGet('/me/tracks?limit=50');
+      const data = await apiFetch('/me/tracks?limit=50');
       return (data.items || []).map(w => toSongItem(mapTrack(w.track)));
     }
     default: return [];
@@ -111,33 +132,65 @@ async function getLibrary(category) {
 async function getChildren(parentKind, parentId) {
   switch (parentKind) {
     case 'playlist': {
-      const data = await apiGet(`/playlists/${parentId}/tracks?limit=50`);
+      const data = await apiFetch(`/playlists/${parentId}/tracks?limit=50`);
       return (data.items || [])
         .filter(w => w.track && w.track.id)
         .map(w => toSongItem(mapTrack(w.track)));
     }
     case 'artist': {
-      const data = await apiGet(`/artists/${parentId}/albums?limit=50&include_groups=album,single`);
+      // Use Spotify's default limit; overriding it triggered a 400 "Invalid limit" on this endpoint.
+      const data = await apiFetch(`/artists/${parentId}/albums?include_groups=album,single`);
       return (data.items || []).map(mapAlbum);
     }
     case 'album': {
-      // Album track items lack full album data; fetch album once for artwork.
-      const album = await apiGet(`/albums/${parentId}`);
+      // /albums/{id}/tracks items don't carry album art, so fetch the album once and inject.
+      const album = await apiFetch(`/albums/${parentId}`);
       const artwork = pickAlbumArt(album.images);
-      const data = await apiGet(`/albums/${parentId}/tracks?limit=50`);
-      return (data.items || []).map(t => toSongItem({
-        id:           t.id,
-        name:         t.name,
-        artists:      (t.artists || []).map(a => a.name).join(', '),
-        albumArt:     artwork,
-        previewUrl:   t.preview_url || null,
-        durationMs:   t.duration_ms || 0,
-        hasFullTrack: false,
-      }));
+      const data = await apiFetch(`/albums/${parentId}/tracks?limit=50`);
+      return (data.items || []).map(t => toSongItem(mapTrack(t, { albumArtOverride: artwork })));
     }
     default: return [];
   }
 }
+
+// ─── Full-track playback via Web Playback SDK ────────────────────────────────
+
+// Play a track on the SDK device. When `contextKind` + `contextId` are given,
+// the server-side queue auto-advances (e.g. pick song 3 of an album, continue
+// to 4, 5, ...). `trackIds` provides an explicit ad-hoc queue. Otherwise the
+// track plays alone.
+async function playTrack(trackId, { contextKind, contextId, trackIds } = {}) {
+  await window.SpotifyPlayer.init();
+  const deviceId = window.SpotifyPlayer.getDeviceId();
+  if (!deviceId) throw new Error('Spotify SDK device not ready');
+
+  const trackUri = `spotify:track:${trackId}`;
+  let body;
+  if (contextKind && contextId) {
+    body = { context_uri: `spotify:${contextKind}:${contextId}`, offset: { uri: trackUri }, position_ms: 0 };
+  } else if (trackIds && trackIds.length) {
+    body = { uris: trackIds.map(id => `spotify:track:${id}`), offset: { uri: trackUri }, position_ms: 0 };
+  } else {
+    body = { uris: [trackUri] };
+  }
+
+  await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'PUT',
+    body,
+  });
+}
+
+// Remote-playback interface — thin wrappers around SpotifyPlayer so the app
+// engine can talk to Spotify and Apple through the same surface.
+async function pause()    { return window.SpotifyPlayer.pause(); }
+async function resume()   { return window.SpotifyPlayer.resume(); }
+async function seekToMs(ms) { return window.SpotifyPlayer.seek(ms); }
+async function nextTrack()     { return window.SpotifyPlayer.nextTrack(); }
+async function previousTrack() { return window.SpotifyPlayer.previousTrack(); }
+function getPositionMs()  { return window.SpotifyPlayer.currentPositionMs(); }
+function getDurationMs()  { return window.SpotifyPlayer.getDurationMs(); }
+function getCurrentTrackId() { return window.SpotifyPlayer.getCurrentTrackId(); }
+function onTrackChange(cb) { return window.SpotifyPlayer.onTrackChange(cb); }
 
 const SpotifySource = {
   displayName: 'Spotify',
@@ -146,7 +199,20 @@ const SpotifySource = {
   search,
   getLibrary,
   getChildren,
+  // Remote-playback interface
+  playTrack,
+  pause,
+  resume,
+  seekToMs,
+  nextTrack,
+  previousTrack,
+  getPositionMs,
+  getDurationMs,
+  getCurrentTrackId,
+  onTrackChange,
 };
 
 window.SpotifySource = SpotifySource;
 if (window.MusicSources) window.MusicSources.register('spotify', SpotifySource);
+
+})();

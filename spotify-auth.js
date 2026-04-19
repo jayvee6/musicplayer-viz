@@ -5,7 +5,23 @@
 const REDIRECT_URI = `${location.origin}/`;
 const TOKEN_KEY    = 'spotify_token_v1';
 const VERIFIER_KEY = 'spotify_pkce_verifier';
-const SCOPES       = ''; // Phase 1 needs none; Phase 2 adds 'streaming user-modify-playback-state user-read-playback-state'
+// Scopes needed by the iPod library browser + Web Playback SDK:
+//   user-library-read            — /me/tracks, /me/albums
+//   playlist-read-private        — /me/playlists (private + owned)
+//   playlist-read-collaborative  — collaborative playlists
+//   user-follow-read             — /me/following?type=artist
+//   streaming                    — Web Playback SDK (Premium-only)
+//   user-modify-playback-state   — PUT /me/player/play to start SDK playback
+//   user-read-playback-state     — GET /me/player for device state
+const SCOPES = [
+  'user-library-read',
+  'playlist-read-private',
+  'playlist-read-collaborative',
+  'user-follow-read',
+  'streaming',
+  'user-modify-playback-state',
+  'user-read-playback-state',
+].join(' ');
 
 let _clientIdPromise = null;
 function getClientId() {

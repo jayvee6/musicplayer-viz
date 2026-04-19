@@ -3,12 +3,18 @@
 const EMOJIS = ['🐻','🦊','🦁','🐱','🐶','🐼','🤖','🐲','🦄','🐷','🐰','🐵'];
 
 // ─── Audio engine ─────────────────────────────────────────────────────────────
-// Supports two playback modes behind a shared interface so the analyser pipeline
-// doesn't care whether audio came from a local file (AudioBuffer path) or a
-// streaming-service preview URL (<audio> + MediaElementSource path).
+// Three playback modes behind a shared interface:
+//   'buffer'  — decoded AudioBuffer (local file). Real FFT.
+//   'element' — <audio> + MediaElementSource (e.g. Apple/Spotify preview URL). Real FFT.
+//   'remote'  — source-owned player (Spotify Web Playback SDK, Apple MusicKit).
+//               DRM blocks FFT; visuals come from tab capture or ambient mode.
 
 let audioCtx, analyser, sourceNode, audioBuffer;
 let frequencyData;
+// activeAnalyser is whichever analyser updateAudioValues reads from this frame.
+// Defaults to `analyser` (inline path for buffer/element modes); capture module
+// switches it to a dead-end analyser fed by getDisplayMedia/getUserMedia.
+let activeAnalyser = null;
 let isPlaying = false;
 let startTime = 0;
 let pauseOffset = 0;
@@ -19,7 +25,6 @@ let pauseOffset = 0;
 let streamAudio = null;
 let streamMediaSource = null;
 
-// 'buffer' = AudioBuffer path; 'element' = <audio> path; null = nothing loaded.
 let sourceMode = null;
 
 let bass = 0, mid = 0, treble = 0;
@@ -33,6 +38,18 @@ function initAudio() {
   analyser.smoothingTimeConstant = 0.8;
   frequencyData = new Uint8Array(analyser.frequencyBinCount);
   analyser.connect(audioCtx.destination);
+  activeAnalyser = analyser;
+
+  // Expose a minimal handle for audio-capture.js to plug into our graph.
+  window.vizAudio = {
+    get ctx() { return audioCtx; },
+    get analyser() { return analyser; },
+    setActiveAnalyser(node) {
+      activeAnalyser = node || analyser;
+      // frequencyData sized for primary analyser; reuse if capture analyser
+      // matches fftSize (it does — we set it the same in audio-capture).
+    },
+  };
 }
 
 function ensureStreamAudio() {
@@ -47,21 +64,32 @@ function ensureStreamAudio() {
 }
 
 // Unified queries used by progress UI, seek handlers, and has-track checks.
+function remoteSrc() {
+  if (sourceMode !== 'remote') return null;
+  const s = currentStreamingSource && currentStreamingSource();
+  return (s && typeof s.playTrack === 'function') ? s : null;
+}
+
 function hasTrack() {
-  return sourceMode === 'buffer' ? !!audioBuffer
-       : sourceMode === 'element' ? !!(streamAudio && streamAudio.src)
-       : false;
+  if (sourceMode === 'buffer')  return !!audioBuffer;
+  if (sourceMode === 'element') return !!(streamAudio && streamAudio.src);
+  if (sourceMode === 'remote')  return true; // set synchronously before first state arrives
+  return false;
 }
 
 function trackDuration() {
   if (sourceMode === 'buffer')  return audioBuffer ? audioBuffer.duration : 0;
   if (sourceMode === 'element') return (streamAudio && isFinite(streamAudio.duration)) ? streamAudio.duration : 0;
+  const r = remoteSrc();
+  if (r) { const ms = r.getDurationMs(); return ms ? ms / 1000 : 0; }
   return 0;
 }
 
 function currentPosSec() {
-  if (sourceMode === 'buffer') return isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
+  if (sourceMode === 'buffer')  return isPlaying ? audioCtx.currentTime - startTime : pauseOffset;
   if (sourceMode === 'element' && streamAudio) return streamAudio.currentTime;
+  const r = remoteSrc();
+  if (r) return r.getPositionMs() / 1000;
   return 0;
 }
 
@@ -73,6 +101,7 @@ function setTransportEnabled(on) {
 
 function setTrackDisplayName(text) {
   const el = document.getElementById('track-name');
+  if (el.textContent === text) return; // skip reflow when unchanged
   el.classList.remove('ticker');
   el.style.removeProperty('--ticker-dist');
   el.style.removeProperty('--ticker-dur');
@@ -100,6 +129,10 @@ function stopOtherMode(nextMode) {
   if (nextMode !== 'element' && streamAudio && !streamAudio.paused) {
     streamAudio.pause();
   }
+  if (nextMode !== 'remote' && sourceMode === 'remote') {
+    const s = currentStreamingSource && currentStreamingSource();
+    if (s && s.pause) { try { s.pause(); } catch {} }
+  }
   isPlaying = false;
 }
 
@@ -118,6 +151,50 @@ function loadAudio(file) {
   reader.readAsArrayBuffer(file);
 }
 
+// Full-track playback via the current source's own player (Spotify SDK, Apple
+// MusicKit). `meta` matches loadStreamUrl: { displayName, albumArt }. DRM
+// blocks FFT so reactive visuals need tab capture or ambient mode.
+async function loadRemoteTrack(trackId, meta, queueOptions) {
+  if (!audioCtx) initAudio();
+  stopOtherMode('remote');
+  sourceMode = 'remote';
+  pauseOffset = 0;
+  if (typeof ipodMode !== 'undefined') ipodMode = 'now';
+
+  if (meta) updateNowPlayingUI(meta);
+  setTransportEnabled(true);
+  syncIPodView();
+
+  const src = currentStreamingSource();
+  if (!src || !src.playTrack) throw new Error('Current source does not support full-track playback');
+
+  await src.playTrack(trackId, queueOptions);
+  isPlaying = true;
+  syncPlayBtn();
+}
+
+// Central now-playing UI updater. meta = { title, artist, album?, albumArt?, displayName? }.
+// displayName is derived from "artist — title" if not supplied; used for the pill ticker.
+function updateNowPlayingUI(meta) {
+  const { title = '', artist = '', album, albumArt } = meta || {};
+  const displayName = meta.displayName || (artist ? `${artist} — ${title}` : title);
+
+  setTrackDisplayName(displayName);
+  document.getElementById('ipod-track-name').textContent = displayName;
+  const artEl   = document.getElementById('album-art');
+  const ipodArt = document.getElementById('ipod-art');
+  if (albumArt) {
+    artEl.src = albumArt;   artEl.style.display = 'block';
+    ipodArt.src = albumArt; ipodArt.style.display = 'block';
+  } else {
+    artEl.style.display = 'none';
+    ipodArt.style.display = 'none';
+  }
+  if (typeof setMediaSessionMetadata === 'function') {
+    setMediaSessionMetadata({ title, artist, album, artworkUrl: albumArt });
+  }
+}
+
 function loadStreamUrl(url, meta) {
   if (!audioCtx) initAudio();
   if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -129,19 +206,7 @@ function loadStreamUrl(url, meta) {
   pauseOffset = 0;
   if (typeof ipodMode !== 'undefined') ipodMode = 'now';
   setTransportEnabled(true);
-  if (meta) {
-    setTrackDisplayName(meta.displayName || '');
-    document.getElementById('ipod-track-name').textContent = meta.displayName || '';
-    const artEl = document.getElementById('album-art');
-    const ipodArt = document.getElementById('ipod-art');
-    if (meta.albumArt) {
-      artEl.src = meta.albumArt; artEl.style.display = 'block';
-      ipodArt.src = meta.albumArt; ipodArt.style.display = 'block';
-    } else {
-      artEl.style.display = 'none';
-      ipodArt.style.display = 'none';
-    }
-  }
+  if (meta) updateNowPlayingUI(meta);
   syncIPodView();
 }
 
@@ -161,6 +226,8 @@ function play() {
       console.error('[stream play]', e);
     });
     isPlaying = true;
+  } else if (sourceMode === 'remote') {
+    const r = remoteSrc(); if (r) { r.resume(); isPlaying = true; }
   }
 }
 
@@ -174,12 +241,37 @@ function pause() {
     if (!streamAudio) return;
     streamAudio.pause();
     isPlaying = false;
+  } else if (sourceMode === 'remote') {
+    const r = remoteSrc(); if (r) { r.pause(); isPlaying = false; }
   }
 }
 
+// Cache module refs outside the 60fps loop — each `window.*` property access
+// is cheap but adds up at ~4×/frame across lookups. These modules are set
+// once at load and never reassigned, so caching is safe.
+const _Capture = window.AudioCapture;
+const _Ambient = window.AmbientMode;
+
 function updateAudioValues() {
-  if (!analyser) return;
-  analyser.getByteFrequencyData(frequencyData);
+  // Data-source priority, highest first: ambient synth > captured audio >
+  // silent fallback (remote mode w/o capture has no FFT access). Once
+  // frequencyData is populated, the band-sum pass computes bass/mid/treble
+  // for every path — including Ferro, which reads the array directly.
+  if (_Ambient && _Ambient.isActive()) {
+    _Ambient.fillSpectrum(frequencyData, performance.now() / 1000);
+  } else if (_Capture && _Capture.isActive() && activeAnalyser) {
+    activeAnalyser.getByteFrequencyData(frequencyData);
+  } else if (sourceMode === 'remote') {
+    frequencyData.fill(0);
+    bass = mid = treble = 0;
+    bassHistory.unshift(0); bassHistory.pop();
+    return;
+  } else if (activeAnalyser) {
+    activeAnalyser.getByteFrequencyData(frequencyData);
+  } else {
+    return;
+  }
+
   const len = frequencyData.length;
 
   const bassEnd  = Math.floor(len * 0.10);
@@ -1139,6 +1231,8 @@ progressWrap.addEventListener('click', e => {
     if (isPlaying) play();
   } else if (sourceMode === 'element') {
     streamAudio.currentTime = t;
+  } else if (sourceMode === 'remote') {
+    const r = remoteSrc(); if (r) r.seekToMs(t * 1000);
   }
 });
 
@@ -1172,6 +1266,8 @@ function seekBy(delta) {
     if (isPlaying) play();
   } else if (sourceMode === 'element') {
     streamAudio.currentTime = next;
+  } else if (sourceMode === 'remote') {
+    const r = remoteSrc(); if (r) r.seekToMs(next * 1000);
   }
 }
 
@@ -1470,22 +1566,67 @@ function ipodActivate() {
   const src = currentStreamingSource();
 
   if (it.kind === 'category') {
-    const child = { title: it.name, items: [], selectedIdx: 0 };
+    // `category.id` is also the library category name (songs/playlists/...).
+    // Tag only the Songs category with a flat-queue context so picking a song
+    // plays all visible songs in order.
+    const child = {
+      title: it.name,
+      items: [],
+      selectedIdx: 0,
+      queueKind: it.id === 'songs' ? 'flat' : null,
+    };
     ipodStack.push(child);
     loadFrame(child, () => src.getLibrary(it.id));
   } else if (it.kind === 'playlist' || it.kind === 'artist' || it.kind === 'album') {
-    const child = { title: it.name, items: [], selectedIdx: 0 };
+    // Tag the drilled-in frame with source-neutral context so that picking a
+    // song inside it queues the whole playlist/album. Each source's playTrack
+    // translates contextKind+contextId into its native queue format (Spotify
+    // URIs, Apple MusicKit setQueue shape).
+    const usesAsContext = it.kind === 'playlist' || it.kind === 'album';
+    const child = {
+      title: it.name,
+      items: [], selectedIdx: 0,
+      contextKind: usesAsContext ? it.kind : null,
+      contextId:   usesAsContext ? it.id   : null,
+    };
     ipodStack.push(child);
     loadFrame(child, () => src.getChildren(it.kind, it.id));
   } else if (it.kind === 'song') {
     const track = it.track;
-    if (!track || !track.previewUrl) {
+    if (!track) return;
+    const meta = { title: track.name, artist: track.artists, albumArt: track.albumArt };
+
+    // Full-track remote path. Preview fallback stays for any track that
+    // exposes a preview_url (rare now on both Spotify and Apple library).
+    if (track.hasFullTrack && src && src.playTrack) {
+      const queue = {};
+      if (frame.contextKind && frame.contextId) {
+        queue.contextKind = frame.contextKind;
+        queue.contextId   = frame.contextId;
+      } else if (frame.queueKind === 'flat') {
+        queue.trackIds = frame.items.filter(i => i.kind === 'song' && i.id).map(i => i.id);
+      }
+
+      frame.error = null;
+      frame.loading = true;
+      renderIPodMenu();
+      loadRemoteTrack(track.id, meta, queue)
+        .then(() => { frame.loading = false; renderIPodMenu(); })
+        .catch(e => {
+          console.error('[ipod remote play]', e);
+          frame.loading = false;
+          frame.error = e.message || 'Playback failed';
+          renderIPodMenu();
+        });
+      return;
+    }
+
+    if (!track.previewUrl) {
       frame.error = 'No preview available for this song.';
       renderIPodMenu();
       return;
     }
-    const displayName = `${track.artists} — ${track.name}`;
-    loadStreamUrl(track.previewUrl, { displayName, albumArt: track.albumArt });
+    loadStreamUrl(track.previewUrl, meta);
     play();
     syncPlayBtn();
     ipodMode = 'now';
@@ -1558,13 +1699,16 @@ document.querySelector('#ipod-wheel .wheel-back').addEventListener('click', () =
   else                     ipodMoveSelection(-1);
 });
 
-// Circular wheel drag → scroll selection. Accumulate angle deltas; every 22° = 1 step.
+// ▶︎: play/pause regardless of menu/now-playing mode
+document.querySelector('#ipod-wheel .wheel-play').addEventListener('click', togglePlayback);
+
+// Circular wheel drag → scroll selection. Accumulate angle deltas; every STEP_DEG
+// degrees of sweep = 1 step. Larger = slower scroll, less overshoot.
 (() => {
   const wheel = document.getElementById('ipod-wheel');
-  let dragging = false;
   let lastAngle = 0;
   let accum = 0;
-  const STEP_DEG = 22;
+  const STEP_DEG = 40;
 
   function angleFromEvent(e) {
     const r  = wheel.getBoundingClientRect();
@@ -1573,35 +1717,51 @@ document.querySelector('#ipod-wheel .wheel-back').addEventListener('click', () =
     return Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
   }
 
-  wheel.addEventListener('mousedown', e => {
-    // Don't start a drag if the click landed on a wheel label or the center — those have their own handlers.
-    if (e.target.closest('.wheel-label') || e.target.id === 'ipod-center') return;
-    e.preventDefault();
-    dragging = true;
-    lastAngle = angleFromEvent(e);
-    accum = 0;
-  });
-  window.addEventListener('mousemove', e => {
-    if (!dragging) return;
+  // Attach mousemove/mouseup only while dragging — avoids firing the handler
+  // on every mouse move across the page during normal use.
+  function onMove(e) {
     const a = angleFromEvent(e);
     let d = a - lastAngle;
-    // normalize to [-180, 180]
     if (d >  180) d -= 360;
     if (d < -180) d += 360;
     accum += d;
     lastAngle = a;
     while (accum >=  STEP_DEG) { ipodMoveSelection(+1); accum -= STEP_DEG; }
     while (accum <= -STEP_DEG) { ipodMoveSelection(-1); accum += STEP_DEG; }
+  }
+  function onUp() {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup',   onUp);
+  }
+  wheel.addEventListener('mousedown', e => {
+    // Wheel labels and center button handle their own clicks.
+    if (e.target.closest('.wheel-label') || e.target.id === 'ipod-center') return;
+    e.preventDefault();
+    lastAngle = angleFromEvent(e);
+    accum = 0;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup',   onUp);
   });
-  window.addEventListener('mouseup', () => { dragging = false; });
 })();
 
-// Mouse wheel over the iPod also scrolls the selection.
-ipodOverlay.addEventListener('wheel', e => {
-  if (!ipodVisible) return;
-  e.preventDefault();
-  ipodMoveSelection(e.deltaY > 0 ? +1 : -1);
-}, { passive: false });
+// Mouse wheel / trackpad scroll over the iPod also scrolls the selection.
+// Accumulate deltaY so one physical scroll gesture = a few steps, not dozens
+// of events per second (which caused overshoot with a trackpad).
+(() => {
+  const STEP_PX = 50;
+  let wheelAccum = 0;
+  let resetTimer = null;
+  ipodOverlay.addEventListener('wheel', e => {
+    if (!ipodVisible) return;
+    e.preventDefault();
+    wheelAccum += e.deltaY;
+    while (wheelAccum >=  STEP_PX) { ipodMoveSelection(+1); wheelAccum -= STEP_PX; }
+    while (wheelAccum <= -STEP_PX) { ipodMoveSelection(-1); wheelAccum += STEP_PX; }
+    // Drop residual accumulation after a brief idle so a new gesture starts fresh.
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(() => { wheelAccum = 0; }, 180);
+  }, { passive: false });
+})();
 
 // ─── Hide controls + fullscreen ───────────────────────────────────────────────
 
@@ -1820,6 +1980,180 @@ streamingConnect.addEventListener('click', e => {
   }
   refreshStreamingAuthUI();
 })();
+
+// ─── Spotify Web Playback SDK hooks ──────────────────────────────────────────
+
+if (window.SpotifyPlayer) {
+  // Fatal errors from the SDK (init/auth/Premium). Surface into the current
+  // iPod frame if one is open so the user sees *why* playback failed.
+  window.SpotifyPlayer.onFatalError(msg => {
+    console.error('[spotify-player]', msg);
+    const frame = typeof currentFrame === 'function' ? currentFrame() : null;
+    if (frame) { frame.error = msg; frame.loading = false; renderIPodMenu(); }
+  });
+}
+
+// Track-change subscription is source-agnostic. Both SpotifySource and
+// AppleSource call their callback with { id, name, artists: [{name}], album:
+// { name, images: [{url}] } }. The handler updates the now-playing UI and,
+// when the current source is Spotify, kicks off an analysis pre-fetch.
+function onRemoteTrackChange(source, track) {
+  if (sourceMode !== 'remote' || currentStreamingSource() !== source || !track) return;
+  const artist = (track.artists || []).map(a => a.name).join(', ');
+  const albumArt = track.album && track.album.images && track.album.images[0] && track.album.images[0].url;
+  updateNowPlayingUI({
+    title: track.name,
+    artist,
+    album:   track.album && track.album.name,
+    albumArt,
+  });
+}
+if (window.SpotifySource && window.SpotifySource.onTrackChange) {
+  window.SpotifySource.onTrackChange(t => onRemoteTrackChange(window.SpotifySource, t));
+}
+if (window.AppleSource && window.AppleSource.onTrackChange) {
+  window.AppleSource.onTrackChange(t => onRemoteTrackChange(window.AppleSource, t));
+}
+
+// ─── Reactive-visuals source (tab capture OR ambient pulse) ──────────────────
+
+const vizCaptureBtn = document.getElementById('viz-capture-btn');
+const vizAmbientBtn = document.getElementById('viz-ambient-btn');
+const vizOffBtn     = document.getElementById('viz-off-btn');
+const vizStatusEl   = document.getElementById('viz-source-status');
+
+function vizRefreshUI() {
+  const cap = window.AudioCapture && window.AudioCapture.isActive();
+  const amb = window.AmbientMode && window.AmbientMode.isActive();
+  vizCaptureBtn.classList.toggle('active', cap);
+  vizAmbientBtn.classList.toggle('active', amb);
+  vizCaptureBtn.hidden = cap;
+  vizAmbientBtn.hidden = cap || amb;
+  vizOffBtn.hidden     = !(cap || amb);
+  if (cap) {
+    vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
+  } else if (amb) {
+    vizStatusEl.textContent = `Ambient mode — ${window.AmbientMode.getBpm()} BPM. Press T to tap tempo.`;
+  } else {
+    vizStatusEl.textContent = 'Pick a source to drive the visualizer.';
+  }
+}
+
+vizCaptureBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  if (!audioCtx) initAudio();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
+  try {
+    await window.AudioCapture.startTabCapture();
+    vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
+  } catch (err) {
+    console.error('[viz capture]', err);
+    vizStatusEl.textContent = err.message || 'Capture failed';
+  }
+  vizRefreshUI();
+});
+
+vizAmbientBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (window.AudioCapture && window.AudioCapture.isActive()) window.AudioCapture.stop();
+  window.AmbientMode.start();
+  vizRefreshUI();
+});
+
+vizOffBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (window.AudioCapture) window.AudioCapture.stop();
+  if (window.AmbientMode)  window.AmbientMode.stop();
+  vizRefreshUI();
+});
+
+if (window.AudioCapture) window.AudioCapture.onStatusChange(vizRefreshUI);
+vizRefreshUI();
+
+// ─── Keyboard navigation ─────────────────────────────────────────────────────
+// Arrow keys + Space + Enter + Escape, context-aware between menu / now-playing
+// / no-iPod. Ignores events while typing in an input. `T` taps ambient tempo.
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea, [contenteditable]')) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  const k = e.key;
+
+  if (k === 't' || k === 'T') {
+    if (window.AmbientMode && window.AmbientMode.isActive()) {
+      window.AmbientMode.tap();
+      vizRefreshUI();
+      e.preventDefault();
+    }
+    return;
+  }
+
+  if (ipodVisible && ipodMode === 'menu') {
+    switch (k) {
+      case 'ArrowUp':    ipodMoveSelection(-1); e.preventDefault(); break;
+      case 'ArrowDown':  ipodMoveSelection(+1); e.preventDefault(); break;
+      case 'Enter':
+      case 'ArrowRight': ipodActivate();        e.preventDefault(); break;
+      case 'Escape':
+      case 'ArrowLeft':  ipodBack();            e.preventDefault(); break;
+    }
+    return;
+  }
+
+  if (ipodVisible && ipodMode === 'now') {
+    switch (k) {
+      case ' ':          togglePlayback(); e.preventDefault(); break;
+      case 'ArrowLeft':  seekBy(-5);       e.preventDefault(); break;
+      case 'ArrowRight': seekBy(+5);       e.preventDefault(); break;
+      case 'Escape':     ipodBack();       e.preventDefault(); break;
+    }
+    return;
+  }
+
+  // iPod closed — global shortcuts only
+  switch (k) {
+    case ' ':          if (hasTrack()) { togglePlayback(); e.preventDefault(); } break;
+    case 'ArrowLeft':  if (hasTrack()) { seekBy(-5);       e.preventDefault(); } break;
+    case 'ArrowRight': if (hasTrack()) { seekBy(+5);       e.preventDefault(); } break;
+  }
+});
+
+// ─── macOS media keys via MediaSession ───────────────────────────────────────
+// The OS play/pause/next/prev keys drive playback; metadata feeds Control Center.
+
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play',  () => { if (!isPlaying) togglePlayback(); });
+  navigator.mediaSession.setActionHandler('pause', () => { if ( isPlaying) togglePlayback(); });
+  navigator.mediaSession.setActionHandler('seekbackward', () => seekBy(-10));
+  navigator.mediaSession.setActionHandler('seekforward',  () => seekBy(+10));
+  navigator.mediaSession.setActionHandler('nexttrack',     () => { remoteSrc()?.nextTrack?.(); });
+  navigator.mediaSession.setActionHandler('previoustrack', () => { remoteSrc()?.previousTrack?.(); });
+}
+
+function setMediaSessionMetadata({ title, artist, album, artworkUrl }) {
+  if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
+  navigator.mediaSession.metadata = new window.MediaMetadata({
+    title:  title  || '',
+    artist: artist || '',
+    album:  album  || '',
+    artwork: artworkUrl ? [{ src: artworkUrl, sizes: '300x300' }] : [],
+  });
+}
+
+// ─── Debug helper (call window.vizDebug() in DevTools) ───────────────────────
+window.vizDebug = async function () {
+  const r = remoteSrc();
+  const trackId = r ? r.getCurrentTrackId() : null;
+  const posMs   = r ? r.getPositionMs()   : null;
+  return {
+    sourceMode, trackId, posMs,
+    live: { bass, mid, treble },
+    captureActive: !!(window.AudioCapture && window.AudioCapture.isActive()),
+    ambientActive: !!(window.AmbientMode && window.AmbientMode.isActive()),
+  };
+};
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 

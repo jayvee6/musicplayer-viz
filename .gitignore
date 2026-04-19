@@ -5,9 +5,9 @@ music/*.wav
 music/*.ogg
 music/*.aac
 
-# Secrets — never commit
-.env
-.env.local
+# Secrets — never commit. .env.example is the only .env* file that belongs in git.
+.env*
+!.env.example
 secrets/
 *.p8
 

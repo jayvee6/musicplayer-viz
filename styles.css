@@ -587,6 +587,46 @@ body {
 }
 #streaming-hint strong { color: rgba(255,255,255,0.85); font-weight: 600; }
 
+#viz-source {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.viz-source-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.45);
+  margin-bottom: 6px;
+}
+.viz-source-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.viz-source-btn {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.75);
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viz-source-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.viz-source-btn.active {
+  background: rgba(30, 215, 96, 0.25);
+  border-color: rgba(30, 215, 96, 0.5);
+  color: #fff;
+}
+#viz-source-status {
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.55);
+  min-height: 14px;
+}
+
 /* ─── iPod menu (library browser) ───────────────────────────────── */
 
 #ipod-view-menu { background: #c8d8b8; }
