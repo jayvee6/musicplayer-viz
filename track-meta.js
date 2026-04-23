@@ -50,8 +50,19 @@
         console.warn('[track-meta] spotify fetch failed', err);
       }
     }
-    // Apple tracks intentionally leave currentFeatures = null (engine falls
-    // back to neutral mood; real FFT from mic capture still drives the viz).
+    // Apple tracks: try ISRC bridge → Spotify audio-features. Catalog song IDs
+    // (numeric) can be resolved via Apple Music API → ISRC → Spotify search.
+    // Library IDs ("i.*") are silently skipped; engine falls back to neutral mood.
+    if (opts.source === 'apple' && window.AppleISRC) {
+      try {
+        const features = await window.AppleISRC.fetchFeaturesForAppleTrack(opts.id);
+        if (currentKey === key && features) {
+          currentFeatures = features;
+        }
+      } catch (err) {
+        console.warn('[track-meta] apple isrc bridge failed', err);
+      }
+    }
   }
 
   window.TrackMeta = { current, set, DEFAULTS };
