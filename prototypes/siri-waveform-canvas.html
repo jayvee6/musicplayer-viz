@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Siri Waveform — Canvas Prototype</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0B0B1A;
+      overflow: hidden;
+    }
+    #c {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    #hud {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      color: rgba(255, 255, 255, 0.55);
+      font: 12px/1.4 -apple-system, ui-monospace, monospace;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.45);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      pointer-events: none;
+      user-select: none;
+    }
+    #hud b { color: #fff; }
+    #hud code { color: #8fd; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <b>Siri Waveform — canvas prototype</b><br>
+    4 additive layers · parabolic attenuation · chaotic global amp<br>
+    Tweak <code>layers</code> / <code>globalAmp</code> in the source
+  </div>
+
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio, 2);
+      canvas.width  = window.innerWidth  * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // Per-layer config. RGB + alpha stored separately so we can multiply
+    // alpha per pass (glow vs. core) at draw time without parsing strings.
+    // Amplitudes chosen so the tallest peak on a loud moment reaches
+    // roughly 35–45% of screen height — matching the reference's
+    // "peaks punch high, edges pinch to zero" silhouette.
+    const layers = [
+      // Magenta — broad halo, slowest speed, low frequency (wide sweeps)
+      { r: 255, g:  43, b: 214, a: 0.50, speed: 0.00060, amplitude: 180, frequency: 2.8, phase: 0.0 },
+      // Cyan — mid-high, prominent
+      { r:   0, g: 229, b: 255, a: 0.50, speed: 0.00095, amplitude: 165, frequency: 4.2, phase: 1.7 },
+      // Blue — body, higher frequency (tighter peaks)
+      { r:  61, g: 107, b: 255, a: 0.50, speed: 0.00078, amplitude: 145, frequency: 5.6, phase: 3.1 },
+      // Violet — treble highlights, fastest + tightest
+      { r: 200, g: 115, b: 255, a: 0.50, speed: 0.00130, amplitude: 125, frequency: 7.9, phase: 4.8 },
+    ];
+
+    // Chaotic global amplitude — three incommensurate sines so the envelope
+    // swells and settles without ever exactly repeating. Simulates how a
+    // human voice varies over time without needing real audio input.
+    function globalAmp(t) {
+      const base =
+        0.55 +
+        0.28 * Math.sin(t * 0.00071) +
+        0.20 * Math.sin(t * 0.00134 + 1.3) +
+        0.14 * Math.sin(t * 0.00262 + 2.7);
+      return Math.max(0.1, base);
+    }
+
+    function draw() {
+      const t  = Date.now();
+      const w  = window.innerWidth;
+      const h  = window.innerHeight;
+      const cy = h / 2;
+      const stepX = 2;   // 2px steps — plenty smooth, half the path work
+
+      const g = globalAmp(t);
+
+      // Clear to background (source-over), then flip to additive for layers.
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#0B0B1A';
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap  = 'round';
+      ctx.lineJoin = 'round';
+
+      for (const layer of layers) {
+        // Two-pass draw per layer: a thick dim glow pass + a thin bright
+        // core pass. With 'lighter' compositing this approximates a soft
+        // bloom without needing a post-process pipeline. The glow pass
+        // contributes the halo color that mixes across layers; the core
+        // keeps the silhouette crisp.
+        for (const pass of [
+          { width: 10, alpha: 0.12 },  // wide, dim — glow
+          { width:  2, alpha: 1.00 },  // narrow, full — core
+        ]) {
+          ctx.beginPath();
+          ctx.lineWidth   = pass.width;
+          const alpha     = layer.a * pass.alpha;
+          ctx.strokeStyle = `rgba(${layer.r}, ${layer.g}, ${layer.b}, ${alpha})`;
+
+          for (let x = 0; x <= w; x += stepX) {
+            // Normalize to [-1, 1] with 0 at screen center.
+            const nx = (x / w) * 2 - 1;
+            // Parabolic attenuation — guarantees zero at ±1 (edges) and 1
+            // at 0 (center). Smooth, symmetric, no branching.
+            const att = 1 - nx * nx;
+            // Phase-offset per layer so their peaks don't align perfectly
+            // — that's what makes the stack read as distinct colors rather
+            // than a single multicolor line.
+            const wave = Math.sin(nx * layer.frequency + t * layer.speed + layer.phase);
+            const y    = cy + wave * att * layer.amplitude * g;
+
+            if (x === 0) ctx.moveTo(x, y);
+            else         ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  </script>
+</body>
+</html>
