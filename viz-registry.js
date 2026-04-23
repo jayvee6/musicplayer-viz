@@ -180,6 +180,7 @@
     btn.dataset.mode    = String(index);
     btn.title           = e.label;
     btn.setAttribute('aria-label', e.label);
+    btn.setAttribute('aria-pressed', index === 0 ? 'true' : 'false');
     btn.addEventListener('click', () => {
       const fn = typeof window.setMode === 'function' ? window.setMode : setMode;
       fn(index);
@@ -237,10 +238,14 @@
       catch (e) { console.error(`[Viz] ${next.id} init:`, e); }
     }
 
-    // Active-button styling + mode-index cache for legacy checks.
+    // Active-button styling + aria-pressed sync + mode-index cache.
     const row = document.getElementById('mode-buttons');
     if (row) {
-      Array.from(row.children).forEach((b, i) => b.classList.toggle('active', i === index));
+      Array.from(row.children).forEach((b, i) => {
+        const isActive = i === index;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
     }
 
     // Per-viz control group visibility — only the active viz's div is shown.

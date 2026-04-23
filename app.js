@@ -1449,9 +1449,11 @@ document.getElementById('btn-next').addEventListener('click', async () => {
 syncShuffleUI();
 syncRepeatUI();
 
-document.querySelectorAll('.mode-btn').forEach((btn, i) => {
-  btn.addEventListener('click', () => setMode(i));
-});
+// NOTE: .mode-btn click handlers are attached inside viz-registry.js at
+// appendButton() time. Do NOT add a second querySelectorAll here — it caused
+// every legacy dot (0-7) to fire setMode twice per click (double teardown +
+// init, visible as "viz runs twice"). The registry-owned handler is the sole
+// authority for mode-button clicks.
 
 // Edge cycle buttons — mirror of the iOS swipe-left/right gesture. Wraps
 // around at either end so there's always a next/previous.
@@ -1466,6 +1468,34 @@ function cycleViz(delta) {
 }
 document.getElementById('viz-cycle-prev')?.addEventListener('click', () => cycleViz(-1));
 document.getElementById('viz-cycle-next')?.addEventListener('click', () => cycleViz(+1));
+
+// ─── Keyboard accessibility ───────────────────────────────────────────────────
+// Arrow keys cycle visualizers. Space toggles play/pause.
+// Guard: skip when focus is inside a text input / slider so the user can still
+// type in viz control fields or drag sliders without accidentally switching modes.
+document.addEventListener('keydown', e => {
+  const tag  = document.activeElement ? document.activeElement.tagName : '';
+  const type = document.activeElement ? (document.activeElement.type || '') : '';
+  const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  // Allow range/checkbox inputs to keep their default key behaviour, but still
+  // intercept ArrowLeft/Right when they're on a text or number input only if
+  // the input itself hasn't consumed the event (it always will for those types).
+  if (isInput && type !== 'range' && type !== 'checkbox') return;
+  // For range inputs, ArrowLeft/Right are consumed by the slider — let them be.
+  if (isInput && type === 'range') return;
+
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); cycleViz(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); cycleViz(+1); }
+  if (e.key === ' ') {
+    // Space: toggle play/pause only when not focused on a button (buttons get
+    // click from Space by default; we only want the doc-level handler for the
+    // background / non-interactive areas).
+    if (tag === 'BUTTON') return;
+    e.preventDefault();
+    const btn = document.getElementById('play-pause');
+    if (btn && !btn.disabled) btn.click();
+  }
+});
 
 document.getElementById('speed-slider').addEventListener('input', e => {
   ringSpeed = e.target.value / 50;
