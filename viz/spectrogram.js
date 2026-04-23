@@ -144,7 +144,10 @@
     if (!scene) return;
 
     const f = frame || {};
-    pushFrame(f.magnitudes);
+    // Prefer the EMA-smoothed mags so column tips don't jitter frame-to-frame.
+    // Falls back to raw mags for backwards-compat in case audio-engine.js
+    // hasn't shipped the smoothed field yet.
+    pushFrame(f.magnitudesSmooth || f.magnitudes);
     histTex.needsUpdate = true;
 
     const react = window.Viz.controlValue('spectrogram', 'react');

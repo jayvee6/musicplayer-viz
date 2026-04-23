@@ -142,11 +142,13 @@
       this.dbSpectrum  = new Float32Array(HALF_N);  // from analyser
       this.timeDomain  = new Float32Array(FFT_SIZE); // raw ~[-1,1] samples
       this.mags        = new Float32Array(BIN_COUNT);
+      this.magsSmooth  = new Float32Array(BIN_COUNT); // EMA-smoothed view of mags
       this.waveform    = new Float32Array(256);      // downsampled time-domain
       this.noiseFloor  = new Float32Array(BIN_COUNT).fill(0.01);
       this.peakFloor   = 0.0001;
       this.bassHistory = new Float32Array(16);      // for shader reads
       this.onset       = new OnsetBPMDetector();
+      this.lastT       = 0;
 
       // Published frame. References to mags/bassHistory are stable across
       // frames so renderers can cache them without re-looking-up per frame.
@@ -160,6 +162,13 @@
         isBeatNow:    false,
         bassHistory:  this.bassHistory,
         magnitudes:   this.mags,
+        // EMA-smoothed 32-bin magnitudes — same shape as `magnitudes`, but
+        // each bin tracked through VizEnv.followArray so per-frame jitter is
+        // suppressed without losing onset punch. Opt-in: viz that already
+        // apply their own filtering (Ferrofluid's spring-damper) should keep
+        // reading `magnitudes`; viz that paint mags directly (Spectrogram,
+        // future bar viz) get a cleaner read from `magnitudesSmooth`.
+        magnitudesSmooth: this.magsSmooth,
         // Time-domain samples downsampled to 256 points across the FFT window.
         // Values ~[-1, 1] when analyser has real signal; zeros for DRM playback
         // (Web Playback SDK doesn't route audio through AnalyserNode).
@@ -206,12 +215,35 @@
       if (silent && window.SpotifyAnalysis &&
           window.SpotifyAnalysis.fillMagnitudes(this.mags, synth.trackId, synth.posSec)) {
         this._publish(t);
+        this._smoothMags(t);
         return;
       }
 
       this._gate();
       this._agc();
       this._publish(t);
+      this._smoothMags(t);
+    }
+
+    // EMA over the post-AGC magnitudes. Fast attack (~10ms) preserves
+    // transients for beat reads; longer release (~120ms) tames flickery
+    // bar tips on Spectrogram + future mag-reading viz. Uses VizEnv if
+    // loaded; no-op cleanly if it hasn't been (defensive against load
+    // order, though index.html loads envelopes.js before audio-engine).
+    _smoothMags(t) {
+      const dt = this.lastT === 0 ? (1 / 60) : Math.min(0.1, Math.max(0.001, t - this.lastT));
+      this.lastT = t;
+      if (window.VizEnv && typeof window.VizEnv.followArray === 'function') {
+        window.VizEnv.followArray(this.magsSmooth, this.mags, dt, {
+          attack: 0.010, release: 0.120,
+        });
+      } else {
+        // Plain 60fps EMA fallback — same feel, just hard-coded constants.
+        const k = 1 - Math.exp(-dt / 0.05);
+        for (let b = 0; b < this.magsSmooth.length; b++) {
+          this.magsSmooth[b] += (this.mags[b] - this.magsSmooth[b]) * k;
+        }
+      }
     }
 
     // True if the mel-projected magnitudes carry meaningful energy. Threshold
