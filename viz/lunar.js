@@ -46,8 +46,13 @@
     uniform float     u_valence;
     uniform float     u_energy;
     uniform sampler2D u_moonTex;
-    uniform float     u_texLoaded;   // 1.0 once the image is in — gate the sample
+    uniform sampler2D u_dispTex;     // NASA LDEM heightmap — real lunar elevation
+    uniform float     u_texLoaded;   // 1.0 once the colour image is in
+    uniform float     u_dispLoaded;  // 1.0 once the displacement map is in
     uniform float     u_bumpAmt;     // user slider; scales the tangent bump
+    uniform float     u_beatPulse;   // raw beatPulse; pulses the starfield on detected beats
+    uniform float     u_sunPhase;    // radians — CPU-accumulated sun orbit angle
+    uniform float     u_ambient;     // 0..~0.3 — brightness of the shadowed side
 
     // ── Classic Perlin 3D (Gustavson / Ashima) ────────────────────────
     // Gradient noise — smoother and more organic than value noise, no
@@ -141,22 +146,26 @@
     }
 
     // ── Bump map (shading only — never fed into SDF) ──────────────────
-    // Pure LROC luminance — no procedural noise. The texture itself
-    // encodes the relief that matches what the colour channels show,
-    // so any extra noise just fights with it. Before the image loads
-    // the sampler returns near-zero and the bump is ~flat; acceptable
-    // for the brief pre-paint window.
+    // Pure NASA LDEM displacement. Colour-luminance fallback removed so
+    // real elevation is the only driver — no double-bumping from the
+    // colour map on top. During the ~200ms it takes the PNG to load the
+    // surface reads as flat; acceptable for that brief window.
     float bumpHeight(vec3 p) {
       vec3 nPos = normalize(p);
       vec2 uv = vec2(
         atan(nPos.z, nPos.x) / (2.0 * 3.14159265) + 0.5,
         asin(clamp(nPos.y, -1.0, 1.0)) / 3.14159265 + 0.5
       );
-      return dot(texture2D(u_moonTex, uv).rgb, vec3(0.299, 0.587, 0.114));
+      return texture2D(u_dispTex, uv).r;
     }
 
     vec3 bumpGrad(vec3 p) {
-      float e = 0.0025;
+      // Wider epsilon than the iOS version — the LDEM heightmap has much
+      // sharper texel-scale transitions (real elevation data, not smooth
+      // procedural noise), so a tight epsilon picks up single-pixel
+      // spikes and gives craters hard black rings. Sampling ~3 texels
+      // apart averages those spikes into readable relief.
+      float e = 0.006;
       vec2 k = vec2(e, 0.0);
       float inv2e = 1.0 / (2.0 * e);
       return vec3(
@@ -232,12 +241,16 @@
     }
 
     // ── Starfield ─────────────────────────────────────────────────────
-    // Render each hashed star as a soft disc using the sub-cell fractional
-    // offset from cell centre — otherwise floor() on the cell grid shows
-    // every star as a hard square pixel.
-    float starField(vec3 dir, float time, float treble) {
+    // Each hashed star is a soft disc with Perlin-noise-driven ambient
+    // twinkle + a sharp beat-driven brightness kick. Perlin gives organic
+    // breathing; beatPulse (raw, per-frame exponential from the onset
+    // detector) multiplies brightness on top so every detected beat
+    // flashes the whole sky.
+    float starField(vec3 dir, float time, float treble, float beat) {
       vec3 d = normalize(dir);
       float s = 0.0;
+      float beatKick = 1.0 + beat * 1.4;
+
       {
         vec3 cell = floor(d * 100.0);
         float r = lh1(cell);
@@ -245,7 +258,8 @@
           vec2 sub = fract(d.xy * 100.0) - 0.5;
           float dd = length(sub);
           float star = smoothstep(0.30, 0.0, dd);
-          float twinkle = 0.7 + 0.3 * sin(time * 4.0 + r * 43.0 + treble * 10.0);
+          float n = cnoise(vec3(r * 12.3, r * 7.7, time * (0.6 + treble * 0.8)));
+          float twinkle = (0.65 + 0.35 * n) * beatKick;
           s += star * twinkle;
         }
       }
@@ -256,7 +270,8 @@
           vec2 sub = fract(d.xy * 160.0) - 0.5;
           float dd = length(sub);
           float star = smoothstep(0.28, 0.0, dd);
-          s += star * 0.45;
+          float n = cnoise(vec3(r * 9.1, r * 14.4, time * 0.9));
+          s += star * (0.35 + 0.25 * n) * beatKick;
         }
       }
       return min(s, 1.0);
@@ -268,7 +283,10 @@
       vec2 uv = (vUv - 0.5) * vec2(asp, 1.0);
 
       vec3 ro = vec3(0.0, 0.0, 2.5);
-      vec3 rd = normalize(vec3(uv, -1.4));
+      // Ray direction z tuned so the R=0.65 moon fills ~90% of the
+      // landscape viewport height. Was -1.4 (~77%); tightening to -1.65
+      // narrows the effective FOV and blows the moon up in frame.
+      vec3 rd = normalize(vec3(uv, -1.65));
 
       float tilt   = 0.18;
       float boundR = 0.75;
@@ -326,15 +344,16 @@
           vec3 surf = mix(fallback, lroc, u_texLoaded);
           surf *= (1.0 - microDark * 0.18);
 
-          // Orbiting sun — lives in world space, rotated into local space
-          // for dot products with the local surface normal.
-          float sunOrbit = u_time * 0.08;
-          float sunElev  = 0.32 + 0.14 * sin(u_time * 0.035);
-          float ce       = cos(sunElev);
-          vec3 sunWorld  = vec3(cos(sunOrbit) * ce,
+          // Sun orbits continuously — CPU accumulates u_sunPhase at a
+          // base rate with a bass kick, giving a real lunar-cycle feel
+          // where phases sweep across the surface. Slight fixed elevation
+          // keeps the terminator from being a boring vertical line.
+          float sunElev = 0.18;
+          float ce      = cos(sunElev);
+          vec3  sunWorld = vec3(sin(u_sunPhase) * ce,
                                 sin(sunElev),
-                                sin(sunOrbit) * ce) * 6.0;
-          vec3 sunLocal  = lrotX(lrotY(sunWorld, -u_rotY), -tilt);
+                                cos(u_sunPhase) * ce) * 6.0;
+          vec3  sunLocal = lrotX(lrotY(sunWorld, -u_rotY), -tilt);
 
           vec3 toSun = sunLocal - hitLocal;
           float sunDist = length(toSun);
@@ -342,14 +361,21 @@
           float sunAtten = clamp(36.0 / (sunDist * sunDist), 0.75, 1.15);
 
           float NdL = max(0.0, dot(n, L));
-          float lit = smoothstep(0.0, 0.14, NdL) * NdL;
+          // Softened terminator — widened from (0, 0.14) to (-0.1, 0.30)
+          // so the shadow line rolls off organically instead of cutting
+          // hard against crater bump normals that are wildly off the
+          // geometric normal.
+          float lit = smoothstep(-0.10, 0.30, NdL) * NdL;
 
-          vec3 sunColor = vec3(1.00, 0.96, 0.88);
-          vec3 skyFill  = vec3(0.32, 0.40, 0.55);
+          // Beat reactivity — the sun briefly flashes warmer and brighter
+          // on each detected beat. beatPulse is a raw exp(-8*t) envelope
+          // so this reads as a sharp pulse, not a slow drift.
+          vec3  sunColor = vec3(1.00, 0.96, 0.88) * (1.0 + u_beatPulse * 0.35);
+          vec3  skyFill  = vec3(0.32, 0.40, 0.55);
 
           col  = surf * sunColor * lit * sunAtten;
           col += surf * skyFill * 0.035 * max(0.25, 0.5 + 0.5 * nGeom.y);
-          col += surf * 0.015;
+          col += surf * u_ambient;          // user-controlled shadow-side fill
           col *= (1.0 + u_energy * 0.20);
 
           // Limb darkening — softened so the edge isn't overly shadowed
@@ -363,7 +389,7 @@
       }
 
       if (showBg) {
-        float s = starField(rd, u_time, u_treble);
+        float s = starField(rd, u_time, u_treble, u_beatPulse);
         col = vec3(s) * vec3(0.92, 0.95, 1.0);
         float neb = lfbm(vec3(rd.xy * 0.9 + vec2(u_time * 0.012, 0.3), 0.5));
         vec3 nc = mix(vec3(0.0, 0.01, 0.04), vec3(0.02, 0.0, 0.05), u_valence);
@@ -374,12 +400,13 @@
     }
   `;
 
-  let scene = null;
-  let mat   = null;
-  let rotY  = 0;
-  let lastT = 0;
-  let tex2K = null;   // 2K LROC mosaic (~460 KB)
-  let tex4K = null;   // 4K LROC mosaic (~3 MB)
+  let scene    = null;
+  let mat      = null;
+  let rotY     = 0;
+  let sunPhase = 0;   // radians; CPU-accumulated sun orbit angle
+  let lastT    = 0;
+  let tex2K    = null;  // 2K LROC mosaic (~460 KB)
+  let tex4K    = null;  // 4K LROC mosaic (~3 MB)
 
   function init() {
     if (!window.vizGL && typeof window.initThree === 'function') window.initThree();
@@ -407,6 +434,13 @@
     // the 2K variant isn't held up waiting on the larger download.
     tex4K = null;
 
+    // NASA LDEM displacement map — real lunar elevation data. Drives
+    // the tangent-plane bump so crater rims and maria basins show
+    // genuine relief instead of an approximation of luminance.
+    const dispTex = prepTex(loader.load('textures/ldem_2k.png', () => {
+      if (mat) mat.uniforms.u_dispLoaded.value = 1.0;
+    }));
+
     mat = new THREE.ShaderMaterial({
       uniforms: {
         u_time:       { value: 0 },
@@ -417,8 +451,13 @@
         u_valence:    { value: 0.5 },
         u_energy:     { value: 0.5 },
         u_moonTex:    { value: tex2K },
+        u_dispTex:    { value: dispTex },
         u_texLoaded:  { value: 0.0 },
-        u_bumpAmt:    { value: 0.12 },
+        u_dispLoaded: { value: 0.0 },
+        u_bumpAmt:    { value: 0.005 },
+        u_sunPhase:   { value: 0 },
+        u_ambient:    { value: 0.03 },
+        u_beatPulse:  { value: 0 },
       },
       vertexShader:   VS,
       fragmentShader: FS,
@@ -455,9 +494,14 @@
     lastT = t;
 
     const f = frame || {};
-    // Slow Y-rotation of the moon; bass nudges the rate slightly so beats
-    // feel like they kick the spin forward.
+    // Slow Y-rotation of the moon; bass nudges the rate slightly so
+    // beats kick the spin forward.
     rotY += dt * (0.08 + (f.bass || 0) * 0.30);
+
+    // Sun orbit — auto-advances so phases cycle across the moon's face
+    // like real-world lunar phases. Base rate ~0.04 rad/s = full cycle
+    // every ~2.6 minutes. Bass nudges it forward.
+    sunPhase += dt * (0.04 + (f.bass || 0) * 0.05);
 
     const u = mat.uniforms;
     u.u_time.value = t;
@@ -467,13 +511,13 @@
     u.u_resolution.value.set(window.innerWidth, window.innerHeight);
     u.u_valence.value = f.valence ?? 0.5;
     u.u_energy.value  = f.energy  ?? 0.5;
-    u.u_bumpAmt.value = window.Viz.controlValue('lunar', 'bump');
-
-    // Swap the texture reference when the hires toggle flips. Cheap —
-    // the sampler just switches which texture it reads from.
-    const wantsHires = !!window.Viz.controlValue('lunar', 'hires');
-    const currentIs4K = tex4K && u.u_moonTex.value === tex4K;
-    if (wantsHires !== currentIs4K) use4K(wantsHires);
+    // Tuned defaults — no user controls. Values settled via earlier
+    // interactive tuning; hard-coded here so the moon looks right out
+    // of the box without fiddling.
+    u.u_bumpAmt.value   = 0.005;
+    u.u_sunPhase.value  = sunPhase;
+    u.u_ambient.value   = 0.03;
+    u.u_beatPulse.value = f.beatPulse || 0;
 
     window.vizGL.renderer.render(scene, window.vizGL.camera);
   }
@@ -484,10 +528,5 @@
     kind:     'webgl',
     initFn:   init,
     renderFn: render,
-    controls: [
-      // Bump as a typed number — 0..1 range, 0.01 step. Sweet spot 0.05..0.25.
-      { id: 'bump',  label: 'Bump', type: 'number', min: 0, max: 1, step: 0.01, default: 0.12, width: '64px' },
-      { id: 'hires', label: '4K',   type: 'toggle', default: false },
-    ],
   });
 })();
