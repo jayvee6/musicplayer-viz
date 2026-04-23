@@ -93,32 +93,65 @@
           col += vec3(0.92, 0.95, 1.0) * star * tw * (1.0 + u_beatPulse * 1.4);
         }
 
-        // Strong blue radial beams — angle offset by u_rotY so the beam
-        // pattern rotates in lock-step with the sphere. Creates the feel
-        // of the ball throwing its mirrored light shafts out into the
-        // room, sweeping as it spins. Shared atmosphere tint so ball
-        // reflection and beams match.
+        // True 3D beams — photons shooting radially out of specific
+        // tiles on the sphere surface.
+        //
+        // Key: instead of quantizing the VIEWING direction (which gives
+        // big cone-shaped cells rather than beams), we compute the
+        // viewing ray's closest approach to the sphere centre and use
+        // the direction to that closest-approach point as the "beam
+        // angle". A beam tile emits along its outward normal; a viewer
+        // sees it only when looking along that radial direction AND
+        // near the sphere's surface (bypass distance ≈ R).
         vec3 atmosphere = vec3(0.25, 0.45, 0.95);
-        vec2 cv = vUv - 0.5;
-        cv.x *= asp;
-        float ang = atan(cv.y, cv.x) + u_rotY;
-        float rr  = length(cv);
-        float beamCell = floor(ang * 96.0 / (2.0 * 3.14159265));
-        float beamH    = dh(vec3(beamCell, 0.0, 0.0));
-        float flick    = 0.55 + 0.45 * sin(u_time * (1.5 + beamH * 3.0) + beamH * 20.0);
-        float beam     = smoothstep(0.78, 1.0, beamH) * flick;
-        beam *= exp(-max(0.0, rr - 0.32) * 2.2);
-        beam *= 1.0 + u_beatPulse * 1.6;
-        vec3 beamCol = mix(atmosphere,
-                           atmosphere * 0.4 + vec3(0.4, 0.5, 0.6),
-                           fract(beamH * 2.7));
-        col += beamCol * beam * 1.1;
+        float tClose = -dot(ro, rd);
+        vec3  pClose = ro + tClose * rd;
+        float dClose = length(pClose);
+        if (tClose > 0.0 && dClose > R * 1.0) {
+          // Direction from sphere centre to viewing ray's closest approach.
+          vec3 beamDir  = pClose / dClose;
+          vec3 beamDirL = lrotY(beamDir, -u_rotY);
 
-        // Soft atmospheric haze behind the beams — same tint, very low
-        // intensity, falling off from centre.
-        col += atmosphere * 0.08 * exp(-rr * 2.0);
+          float bLatRes = 40.0;
+          float bLonRes = 90.0;
+          float bLat = asin(clamp(beamDirL.y, -1.0, 1.0));
+          float bLon = atan(beamDirL.z, beamDirL.x);
+          float bLatIdx = floor(bLat * bLatRes / PI + 0.5);
+          float bLonIdx = floor(bLon * bLonRes / (2.0 * PI) + 0.5);
+          float bHash   = dh(vec3(bLatIdx, bLonIdx, 0.0));
+          float emits   = step(0.92, bHash);   // ~8% of tiles emit
 
-        col += atmosphere * 0.01;  // barely-there ambient tint
+          // Exact tile normal → tightness check narrows the cone so the
+          // beam is a thin radial shaft rather than a sector.
+          float tLatB = (bLatIdx + 0.5) * PI / bLatRes;
+          float tLonB = (bLonIdx + 0.5) * (2.0 * PI / bLonRes);
+          vec3  tN    = vec3(cos(tLatB) * cos(tLonB),
+                             sin(tLatB),
+                             cos(tLatB) * sin(tLonB));
+          float tight = pow(max(0.0, dot(beamDirL, tN)), 900.0);
+
+          // Radial falloff — beam strongest near the sphere surface,
+          // fades with distance out into space.
+          float radial = exp(-(dClose - R) * 1.8);
+
+          float flick = 0.55 + 0.45 * sin(u_time * (1.8 + bHash * 3.0) + bHash * 20.0);
+
+          float beam = emits * tight * radial * flick;
+          beam *= 1.0 + u_beatPulse * 1.5;
+
+          vec3 beamCol = mix(atmosphere,
+                             atmosphere * 0.4 + vec3(0.4, 0.5, 0.6),
+                             fract(bHash * 2.7));
+          col += beamCol * beam * 6.0;
+        }
+
+        // Soft atmospheric haze around the ball — concentric falloff in
+        // screen space so the ball sits in a gentle blue glow.
+        vec2 cvec = vUv - 0.5; cvec.x *= asp;
+        float rr = length(cvec);
+        col += atmosphere * 0.10 * exp(-rr * 2.0);
+
+        col += atmosphere * 0.01;
       } else {
         // ── Ball: chrome mirror facets (Daft Punk RAM cover vibes) ───
         float t = -b - sqrt(disc);
@@ -204,9 +237,11 @@
     }
   `;
 
-  let scene = null;
-  let mat   = null;
-  let lastT = 0;
+  let scene     = null;
+  let mat       = null;
+  let lastT     = 0;
+  let composer  = null;   // EffectComposer with anamorphic star-flare pass
+  let flarePass = null;
 
   function init() {
     if (!window.vizGL && typeof window.initThree === 'function') window.initThree();
@@ -227,6 +262,16 @@
       fragmentShader: FS,
     });
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+    // Anamorphic star-flare post pass — turns bright specular tiles
+    // into cross-shaped film-star highlights, matching the Daft Punk
+    // RAM-era promo photo vibe.
+    if (typeof window.makeDiscoComposer === 'function') {
+      const built = window.makeDiscoComposer(
+        window.vizGL.renderer, scene, window.vizGL.camera
+      );
+      if (built) { composer = built.composer; flarePass = built.flarePass; }
+    }
   }
 
   function render(t, frame) {
@@ -252,7 +297,18 @@
     u.u_beatPulse.value  = f.beatPulse || 0;
     u.u_resolution.value.set(window.innerWidth, window.innerHeight);
 
-    window.vizGL.renderer.render(scene, window.vizGL.camera);
+    if (composer) {
+      // Beat-driven flare — length grows with beatPulse so hits make the
+      // star streaks stretch outward.
+      if (flarePass) {
+        flarePass.uniforms.flareLength.value  = 0.15 + (f.beatPulse || 0) * 0.15;
+        flarePass.uniforms.flareStrength.value = 0.35 + (f.beatPulse || 0) * 0.25;
+      }
+      composer.setSize(window.innerWidth, window.innerHeight);
+      composer.render(dt);
+    } else {
+      window.vizGL.renderer.render(scene, window.vizGL.camera);
+    }
   }
 
   window.Viz.register({

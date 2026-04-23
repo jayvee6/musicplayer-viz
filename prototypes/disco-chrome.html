@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Disco Chrome — Prototype</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 2;
+      color: rgba(255,255,255,0.65); font: 12px/1.4 -apple-system, ui-monospace, monospace;
+      padding: 8px 12px; background: rgba(0,0,0,0.45);
+      border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);
+      pointer-events: none; user-select: none;
+    }
+    #hud b { color: #fff; }
+  </style>
+</head>
+<body>
+<div id="hud">
+  <b>Disco Chrome prototype</b><br>
+  Drag to orbit · scroll to zoom · edit <code>bloomPass</code> below
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE          from 'three';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ── 1. Renderer / scene / camera ──────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(
+  45, window.innerWidth / window.innerHeight, 0.1, 500
+);
+camera.position.set(0, 8, 45);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// ── 2. Procedural cube environment map ────────────────────────────────────
+// Chrome needs something to reflect. Generate 6 canvas faces with a black
+// background and a handful of bright geometric "lights" — this is what
+// the mirror facets pick up, producing the characteristic multi-spot
+// sparkle on each tile.
+function makeEnvFace(seed) {
+  const size = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const ctx = cv.getContext('2d');
+
+  // Deep-navy gradient background — gives beams somewhere to live.
+  const bg = ctx.createLinearGradient(0, 0, 0, size);
+  bg.addColorStop(0.0, '#04060f');
+  bg.addColorStop(1.0, '#000000');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, size, size);
+
+  // Bright geometric "lights" — rotating mix of circles, lines, squares.
+  // Each gets a distinct hue so tiles catch different colours.
+  const rng = mulberry32(seed * 9301 + 49297);
+  for (let i = 0; i < 14; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = 14 + rng() * 32;
+    const hue = Math.floor(rng() * 360);
+    const alpha = 0.85 + rng() * 0.15;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    // Big soft glow
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
+    grd.addColorStop(0.0, `hsla(${hue}, 100%, 85%, ${alpha})`);
+    grd.addColorStop(0.3, `hsla(${hue}, 100%, 60%, ${alpha * 0.5})`);
+    grd.addColorStop(1.0, `hsla(${hue}, 100%, 50%, 0)`);
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+
+    // Sharp hot core
+    const core = ctx.createRadialGradient(x, y, 0, x, y, r * 0.6);
+    core.addColorStop(0.0, `hsla(${hue}, 60%, 98%, 1.0)`);
+    core.addColorStop(1.0, `hsla(${hue}, 100%, 70%, 0)`);
+    ctx.fillStyle = core;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+
+    ctx.restore();
+  }
+  return cv;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const envFaces = [
+  makeEnvFace(1),   // +X
+  makeEnvFace(2),   // -X
+  makeEnvFace(3),   // +Y
+  makeEnvFace(4),   // -Y
+  makeEnvFace(5),   // +Z
+  makeEnvFace(6),   // -Z
+];
+const envTex = new THREE.CubeTexture(envFaces);
+envTex.colorSpace = THREE.SRGBColorSpace;
+envTex.needsUpdate = true;
+scene.environment = envTex;
+// Leaving scene.background as black so the ball glows against void,
+// rather than seeing the env map directly. Comment out the next line
+// if you want to SEE the env map as a skybox:
+// scene.background = envTex;
+
+// ── 3. The sphere ─────────────────────────────────────────────────────────
+// IcosahedronGeometry(radius, detail). detail=3 gives 1280 faces — enough
+// facets to read as a proper disco ball without being over-subdivided.
+const geo = new THREE.IcosahedronGeometry(15, 3);
+
+const mat = new THREE.MeshStandardMaterial({
+  color:       0xffffff,
+  metalness:   1.0,      // pure metal — reflections only, no diffuse tint
+  roughness:   0.1,      // slight roughness softens the reflection edges
+  flatShading: true,     // gives each triangle its own normal → faceted look
+  envMapIntensity: 1.2,  // slight boost so reflections punch through bloom
+});
+
+const ball = new THREE.Mesh(geo, mat);
+scene.add(ball);
+
+// ── 4. Dynamic lighting — two orbiting PointLights ───────────────────────
+// These are what the flat facets pick up; one cool, one warm. Bright
+// enough to trigger the bloom pass — the bloom threshold below is 0.7,
+// so light intensity needs to push pixels past that once reflected.
+const coolLight = new THREE.PointLight(0x44aaff, 400, 120, 2);
+const warmLight = new THREE.PointLight(0xffaa44, 400, 120, 2);
+scene.add(coolLight);
+scene.add(warmLight);
+
+// Subtle ambient so the ball isn't completely black where lights don't hit.
+scene.add(new THREE.AmbientLight(0x112244, 0.3));
+
+// ── 5. Post-processing: EffectComposer + UnrealBloomPass ─────────────────
+const composer = new EffectComposer(renderer);
+composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+composer.setSize(window.innerWidth, window.innerHeight);
+composer.addPass(new RenderPass(scene, camera));
+
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  2.0,    // strength — intense for the retro lens-flare look
+  0.5,    // radius   — how far the glow spreads from bright pixels
+  0.7     // threshold — only pixels brighter than this contribute
+);
+composer.addPass(bloomPass);
+
+// Tweak these live in the browser console:
+//   bloomPass.strength = 1.2
+//   bloomPass.radius   = 0.8
+//   bloomPass.threshold = 0.5
+window.bloomPass = bloomPass;
+
+// ── 6. Resize ─────────────────────────────────────────────────────────────
+addEventListener('resize', () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+});
+
+// ── 7. Animation loop ────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+function animate() {
+  const t = clock.getElapsedTime();
+
+  // Slow Y-rotation of the disco ball.
+  ball.rotation.y = t * 0.25;
+  ball.rotation.x = t * 0.05;  // slight tilt wobble
+
+  // Two orbiting point lights at different radii and heights, opposite
+  // phase so they paint the ball from different sides as they pass.
+  const r = 28;
+  coolLight.position.set(
+    Math.cos(t * 0.6) * r,
+    6 + Math.sin(t * 0.4) * 4,
+    Math.sin(t * 0.6) * r
+  );
+  warmLight.position.set(
+    Math.cos(t * 0.8 + Math.PI) * r,
+    -2 + Math.sin(t * 0.5) * 3,
+    Math.sin(t * 0.8 + Math.PI) * r
+  );
+
+  controls.update();
+  composer.render();   // replaces renderer.render(scene, camera)
+  requestAnimationFrame(animate);
+}
+animate();
+</script>
+</body>
+</html>
