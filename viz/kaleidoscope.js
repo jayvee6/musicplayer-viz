@@ -163,9 +163,14 @@
     const mid    = f.mid    ?? 0;
     const treble = f.treble ?? 0;
 
-    camZ  += dt * (0.4 + bass * 2.0);
-    hue   += dt * 0.05;
-    twist += dt * mid * 0.3;
+    // User controls — read every frame for instant feedback.
+    const cTunnel  = window.Viz.controlValue('kaleidoscope', 'tunnel');
+    const cPalette = window.Viz.controlValue('kaleidoscope', 'palette');
+    const cTwist   = window.Viz.controlValue('kaleidoscope', 'twist');
+
+    camZ  += dt * (0.4 + bass * 2.0) * cTunnel;
+    hue   += dt * 0.05 * cPalette;
+    twist += dt * mid * 0.3 * cTwist;
 
     const u = mat.uniforms;
     u.u_camZ.value       = camZ;
@@ -187,5 +192,10 @@
     kind:   'webgl',
     initFn: init,
     renderFn: render,
+    controls: [
+      { id: 'tunnel',  label: 'Tunnel',  min: 0,   max: 3.0, step: 0.05, default: 1.0 },
+      { id: 'palette', label: 'Palette', min: 0,   max: 3.0, step: 0.05, default: 1.0 },
+      { id: 'twist',   label: 'Twist',   min: 0,   max: 3.0, step: 0.05, default: 1.0 },
+    ],
   });
 })();

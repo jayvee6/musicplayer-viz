@@ -33,8 +33,53 @@
       initFn:     def.initFn     || null,
       renderFn:   def.renderFn,
       teardownFn: def.teardownFn || null,
+      controls:   Array.isArray(def.controls) ? def.controls : [],
     });
     appendButton(entries.length - 1);
+    appendControls(entries[entries.length - 1]);
+  }
+
+  // Builds a <div class="viz-controls"> of <label class="speed-label"><input
+  // type="range">…</label> sliders for any viz that declares `controls`. The
+  // div sits in #sliders-row alongside the legacy vortex/waves/fluid control
+  // groups and is shown only when the viz is active.
+  function appendControls(entry) {
+    if (!entry.controls.length) return;
+    const row = document.getElementById('sliders-row');
+    if (!row) return; // DOM not ready — syncButtons won't rebuild these; ensure load order
+    let div = document.getElementById(`viz-ctl-${entry.id}`);
+    if (!div) {
+      div = document.createElement('div');
+      div.id = `viz-ctl-${entry.id}`;
+      div.className = 'viz-controls';
+      div.style.display = 'none';
+      row.appendChild(div);
+    }
+    div.innerHTML = '';
+    entry.controls.forEach(c => {
+      const label = document.createElement('label');
+      label.className = 'speed-label';
+      label.textContent = c.label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.id   = `viz-ctl-${entry.id}-${c.id}`;
+      input.min  = String(c.min);
+      input.max  = String(c.max);
+      input.step = String(c.step ?? 1);
+      input.value = String(c.default ?? c.min);
+      label.appendChild(input);
+      div.appendChild(label);
+    });
+  }
+
+  // Returns the current numeric value of a registered control, or the default
+  // if the slider isn't in the DOM yet. viz files call this each frame.
+  function controlValue(vizId, controlId) {
+    const input = document.getElementById(`viz-ctl-${vizId}-${controlId}`);
+    if (input) return parseFloat(input.value);
+    const entry = entries.find(e => e.id === vizId);
+    const ctl   = entry && entry.controls.find(c => c.id === controlId);
+    return ctl ? (ctl.default ?? ctl.min) : 0;
   }
 
   function appendButton(index) {
@@ -94,6 +139,13 @@
     if (row) {
       Array.from(row.children).forEach((b, i) => b.classList.toggle('active', i === index));
     }
+
+    // Per-viz control group visibility — only the active viz's div is shown.
+    entries.forEach(e => {
+      const ctrl = document.getElementById(`viz-ctl-${e.id}`);
+      if (ctrl) ctrl.style.display = (e.id === next.id && e.controls.length) ? 'flex' : 'none';
+    });
+
     activeId = next.id;
     window.Viz._currentIndex = index; // read by legacy code that did mode === N checks
   }
@@ -111,6 +163,7 @@
     setMode,
     renderCurrent,
     syncButtons,
+    controlValue,
     get entries() { return entries.slice(); },   // defensive copy
     get activeId() { return activeId; },
     get currentIndex() {

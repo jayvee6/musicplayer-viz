@@ -73,7 +73,8 @@
     glowPulse    = 1.0;
     screenFlash  = 0.35;
     cornerLabelUntil = performance.now() + 1800;
-    for (let i = 0; i < 50; i++) {
+    const count = Math.round(window.Viz.controlValue('dvd', 'particles'));
+    for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 100 + Math.random() * 160;
       particles.push({
@@ -106,7 +107,9 @@
       speedBoost = Math.min(speedBoost + bass * 0.5, 2.5);
     }
     speedBoost = Math.max(0, speedBoost - dt * 1.8);
-    const baseSpeed = reduceMotion ? 18 : 80;
+    // User-adjustable base speed; reduce-motion ignores the slider and locks low.
+    const userSpeed = window.Viz.controlValue('dvd', 'speed');
+    const baseSpeed = reduceMotion ? 18 : userSpeed;
     const curSpeed  = baseSpeed + speedBoost * 45;
 
     // Normalize velocity to the current target speed.
@@ -174,7 +177,8 @@
     const breath    = 0.5 + 0.5 * Math.sin(t * 1.6);           // 0..1, ~0.25 Hz
     const reaction  = Math.max(bass, beatPulse);               // 0..~1
     const glowScale = breath * 0.15 + reaction * 0.40 + glowPulse * 0.30;
-    const glowR     = ART_SIZE * (0.65 + glowScale);           // ~117 idle → ~225 peak
+    const glowMul   = window.Viz.controlValue('dvd', 'glow');
+    const glowR     = ART_SIZE * (0.65 + glowScale) * glowMul; // user-scaled
     const cx        = x + ART_SIZE / 2;
     const cy        = y + ART_SIZE / 2;
 
@@ -256,5 +260,10 @@
     kind:   '2d',
     initFn: init,
     renderFn: render,
+    controls: [
+      { id: 'speed',     label: 'Speed',     min: 30,  max: 160, step: 5,    default: 80  },
+      { id: 'glow',      label: 'Glow',      min: 0,   max: 2.0, step: 0.05, default: 1.0 },
+      { id: 'particles', label: 'Particles', min: 10,  max: 120, step: 5,    default: 50  },
+    ],
   });
 })();
