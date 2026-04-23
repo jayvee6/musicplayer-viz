@@ -65,7 +65,7 @@
         <button class="transport-btn" id="btn-repeat"  title="Repeat: Off">🔁</button>
       </div>
 
-      <!-- Right: file load + playlist + iPod -->
+      <!-- Right: file load + playlist + volume + iPod -->
       <div id="music-actions">
         <label class="file-label" title="Load audio file">
           <input type="file" id="audio-input" accept="audio/*">
@@ -75,6 +75,9 @@
           <button id="playlist-btn" title="Music folder tracks">Tracks</button>
           <ul id="playlist-menu"></ul>
         </div>
+        <label class="vol-label" title="Volume">
+          🔊<input type="range" id="volume-slider" min="0" max="100" value="70">
+        </label>
         <button id="ipod-toggle">iPod</button>
       </div>
 

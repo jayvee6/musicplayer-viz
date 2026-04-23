@@ -2,6 +2,14 @@
 
 const EMOJIS = ['🐻','🦊','🦁','🐱','🐶','🐼','🤖','🐲','🦄','🐷','🐰','🐵'];
 
+const _VOL_KEY        = 'viz-volume';
+const _LAST_TRACK_KEY = 'viz-last-track';
+
+function _savedVolume() {
+  const v = parseFloat(localStorage.getItem(_VOL_KEY));
+  return isNaN(v) ? 0.7 : Math.max(0, Math.min(1, v));
+}
+
 // ─── Audio engine ─────────────────────────────────────────────────────────────
 // Three playback modes behind a shared interface:
 //   'buffer'  — decoded AudioBuffer (local file). Real FFT.
@@ -9,7 +17,7 @@ const EMOJIS = ['🐻','🦊','🦁','🐱','🐶','🐼','🤖','🐲','🦄','
 //   'remote'  — source-owned player (Spotify Web Playback SDK, Apple MusicKit).
 //               DRM blocks FFT; visuals come from tab capture or ambient mode.
 
-let audioCtx, analyser, sourceNode, audioBuffer;
+let audioCtx, analyser, gainNode, sourceNode, audioBuffer;
 let frequencyData;
 // activeAnalyser is whichever analyser updateAudioValues reads from this frame.
 // Defaults to `analyser` (inline path for buffer/element modes); capture module
@@ -53,10 +61,14 @@ function bassHistoryAt(age) {
 
 function initAudio() {
   audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
+  gainNode   = audioCtx.createGain();
+  gainNode.gain.value = _savedVolume();
   analyser   = audioCtx.createAnalyser();
   analyser.fftSize = 2048;
   analyser.smoothingTimeConstant = 0.8;
   frequencyData = new Uint8Array(analyser.frequencyBinCount);
+  // Chain: source → gainNode → analyser → destination
+  gainNode.connect(analyser);
   analyser.connect(audioCtx.destination);
   activeAnalyser = analyser;
 
@@ -103,7 +115,7 @@ function ensureStreamAudio() {
     setTransportEnabled(false);
   });
   streamMediaSource = audioCtx.createMediaElementSource(streamAudio);
-  streamMediaSource.connect(analyser);
+  streamMediaSource.connect(gainNode || analyser);
 }
 
 // Unified queries used by progress UI, seek handlers, and has-track checks.
@@ -265,7 +277,7 @@ function play() {
     if (sourceNode) { try { sourceNode.disconnect(); } catch {} }
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
-    sourceNode.connect(analyser);
+    sourceNode.connect(gainNode || analyser);
     sourceNode.loop = true;
     sourceNode.start(0, pauseOffset % audioBuffer.duration);
     startTime = audioCtx.currentTime - pauseOffset;
@@ -2199,7 +2211,10 @@ function onRemoteTrackChange(source, track) {
     const providerId = source === window.SpotifySource ? 'spotify'
                      : source === window.AppleSource   ? 'apple'
                      : null;
-    if (providerId) window.TrackMeta.set({ source: providerId, id: track.id });
+    if (providerId) {
+      window.TrackMeta.set({ source: providerId, id: track.id });
+      _saveLastTrack(providerId, track.id);
+    }
   }
   // Prefetch Spotify audio-analysis so audio-engine can synthesize a 32-bin
   // spectrum for DRM playback (Web Playback SDK blocks FFT). No-op on Apple.
@@ -2379,6 +2394,75 @@ function setMediaSessionMetadata({ title, artist, album, artworkUrl }) {
     album:  album  || '',
     artwork: artworkUrl ? [{ src: artworkUrl, sizes: '300x300' }] : [],
   });
+}
+
+// ─── Volume control ───────────────────────────────────────────────────────────
+// Applies to: Web Audio GainNode (buffer + element modes) + Spotify SDK.
+// Volume is persisted to localStorage and restored on the next session.
+
+function setMasterVolume(v) {
+  v = Math.max(0, Math.min(1, v));
+  if (gainNode) gainNode.gain.value = v;
+  // Element-mode <audio> volume tracks gain so they're always in sync when
+  // the audio graph is bypassed (e.g., during a MediaElementSource hot-swap).
+  if (streamAudio) streamAudio.volume = v;
+  if (window.SpotifyPlayer) window.SpotifyPlayer.setVolume(v).catch(() => {});
+  localStorage.setItem(_VOL_KEY, v);
+  const slider = document.getElementById('volume-slider');
+  if (slider && slider.value !== String(Math.round(v * 100))) {
+    slider.value = Math.round(v * 100);
+  }
+}
+
+const _volSlider = document.getElementById('volume-slider');
+if (_volSlider) {
+  _volSlider.value = Math.round(_savedVolume() * 100);
+  _volSlider.addEventListener('input', () => setMasterVolume(_volSlider.value / 100));
+}
+
+// Apply saved volume once Spotify SDK is ready (it initialises with its own
+// default). We listen for the first track-change as a proxy for "SDK ready".
+if (window.SpotifyPlayer) {
+  window.SpotifyPlayer.onTrackChange(() => {
+    // Only apply once on first fire — subsequent calls are no-ops because
+    // the SDK volume will already match the slider.
+    if (!_volSlider || _volSlider.dataset.spotifyApplied) return;
+    _volSlider.dataset.spotifyApplied = '1';
+    window.SpotifyPlayer.setVolume(_savedVolume()).catch(() => {});
+  });
+}
+
+// ─── Background-tab persistence (visibilitychange) ────────────────────────────
+// Pause when the tab is hidden; resume automatically when the user returns.
+// Only auto-resumes if *we* caused the pause — user-initiated pauses are
+// respected and not overridden.
+
+let _tabHidePaused = false;
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (isPlaying) {
+      pause();
+      _tabHidePaused = true;
+    }
+  } else {
+    if (_tabHidePaused) {
+      _tabHidePaused = false;
+      if (hasTrack()) play();
+    }
+  }
+});
+
+// ─── Last-track persistence ───────────────────────────────────────────────────
+// Save source + track ID whenever the remote source changes tracks.
+// Restore is handled by SpotifySource.onTrackChange above (the SDK fires
+// player_state_changed on reconnect which re-triggers onRemoteTrackChange and
+// rebuilds our UI automatically). For Apple, MusicKit fires nowPlayingItemDidChange.
+// We store the info so future sessions can offer a "resume" hint.
+
+function _saveLastTrack(source, id) {
+  if (!source || !id) return;
+  try { localStorage.setItem(_LAST_TRACK_KEY, JSON.stringify({ source, id })); } catch {}
 }
 
 // ─── Debug helper (call window.vizDebug() in DevTools) ───────────────────────

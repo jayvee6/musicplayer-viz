@@ -116,6 +116,8 @@ async function seek(ms) { if (player) return player.seek(Math.max(0, Math.floor(
 async function togglePlay()    { if (player) return player.togglePlay(); }
 async function nextTrack()     { if (player) return player.nextTrack(); }
 async function previousTrack() { if (player) return player.previousTrack(); }
+async function setVolume(v)    { if (player) return player.setVolume(Math.max(0, Math.min(1, v))); }
+async function getVolume()     { if (player) return player.getVolume(); return null; }
 
 function onTrackChange(cb) { trackChangeSubs.push(cb); }
 function onFatalError(cb)  { fatalSubs.push(cb); }
@@ -136,6 +138,8 @@ window.SpotifyPlayer = {
   getDurationMs,
   onTrackChange,
   onFatalError,
+  setVolume,
+  getVolume,
 };
 
 })();
