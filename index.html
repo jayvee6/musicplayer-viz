@@ -14,6 +14,10 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+  <!-- UnrealBloomPass + its dependency (LuminosityHighPassShader) for the
+       disco-chrome viz. UMD globals attach to THREE.* namespace. -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
   <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" data-web-components async></script>
   <script src="https://sdk.scdn.co/spotify-player.js"></script>
@@ -208,9 +212,8 @@
   <script src="viz/rorschach.js"></script>
   <script src="viz/fireworks.js"></script>
   <script src="viz/retro-pass.js"></script>
-  <script src="viz/disco-pass.js"></script>
   <script src="viz/seismic-mesh.js"></script>
   <script src="viz/lunar.js"></script>
-  <script src="viz/disco-ball.js"></script>
+  <script src="viz/disco-chrome.js"></script>
 </body>
 </html>

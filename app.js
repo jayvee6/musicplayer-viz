@@ -1993,11 +1993,24 @@ streamingConnect.addEventListener('click', e => {
   if (src) src.connect();
 });
 
-// Initialize default source + consume Spotify OAuth redirect if we landed here with ?code=...
+// Initialize default source + restore any persisted auth. Both services
+// already store tokens in localStorage; this block makes that persistence
+// actually visible at page load:
+//   1. Consume Spotify OAuth redirect if we landed here with ?code=…
+//   2. Proactively refresh a near-expired Spotify token so the user stays
+//      signed in across long sessions without having to re-auth.
+//   3. Eagerly configure MusicKit so isAuthed() can consult MusicKit's
+//      own cached user-token before the user clicks anything.
 (async () => {
   if (window.MusicSources) window.MusicSources.setCurrent('spotify');
   if (window.SpotifyAuth) {
     await window.SpotifyAuth.handleRedirectIfPresent();
+    // getAccessToken() internally refreshes if expired. Any failure path
+    // clears the stale token so the UI correctly shows "Not connected".
+    try { await window.SpotifyAuth.getAccessToken(); } catch {}
+  }
+  if (window.AppleAuth) {
+    try { await window.AppleAuth.configure(); } catch {}
   }
   refreshStreamingAuthUI();
 })();
