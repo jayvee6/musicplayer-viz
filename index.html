@@ -82,17 +82,9 @@
         </div>
       </div>
 
-      <!-- Mode buttons row: always same width, determines pill size -->
-      <div id="mode-buttons">
-        <button class="mode-btn active" data-mode="0">Mandala</button>
-        <button class="mode-btn" data-mode="1">Emoji Waves</button>
-        <button class="mode-btn" data-mode="2">Emoji Vortex</button>
-        <button class="mode-btn" data-mode="3">3D Blob</button>
-        <button class="mode-btn" data-mode="4">Hypno Rings</button>
-        <button class="mode-btn" data-mode="5">Spiral</button>
-        <button class="mode-btn" data-mode="6">Subwoofer</button>
-        <button class="mode-btn" data-mode="7">Ferro</button>
-      </div>
+      <!-- Mode buttons row: populated at bootstrap by viz-registry.js.
+           Each registered visualizer appends a .mode-btn here. -->
+      <div id="mode-buttons"></div>
 
     </div>
 
@@ -186,6 +178,8 @@
   <script src="apple-source.js"></script>
   <script src="audio-capture.js"></script>
   <script src="ambient-mode.js"></script>
+  <script src="viz-registry.js"></script>
+  <script src="audio-engine.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

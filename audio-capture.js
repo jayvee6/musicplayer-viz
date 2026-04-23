@@ -90,6 +90,24 @@ async function startDeviceCapture(deviceId) {
   attach(stream);
 }
 
+// Zero-config mic capture — for the common "point my Mac's mic at the
+// speakers" DRM workaround. No device picker, no BlackHole, just the
+// browser's default audio input.
+async function startMicCapture() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('Microphone capture not supported in this browser.');
+  }
+  emitStatus('requesting');
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl:  false,
+    },
+  });
+  attach(stream);
+}
+
 // Lists audio input devices. Requires a prior mic permission grant to see labels;
 // we do a throwaway getUserMedia first if labels are missing so the user sees
 // useful names like "BlackHole 2ch" instead of generic ids.
@@ -129,6 +147,7 @@ function onStatusChange(cb) { statusSubs.push(cb); }
 window.AudioCapture = {
   startTabCapture,
   startDeviceCapture,
+  startMicCapture,
   listAudioDevices,
   stop,
   isActive,

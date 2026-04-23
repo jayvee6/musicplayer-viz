@@ -44,6 +44,9 @@ function initAudio() {
   window.vizAudio = {
     get ctx() { return audioCtx; },
     get analyser() { return analyser; },
+    // AudioEngine reads the currently-routed analyser every tick so it
+    // transparently picks up capture/mic/primary without extra plumbing.
+    getActiveAnalyser() { return activeAnalyser; },
     setActiveAnalyser(node) {
       activeAnalyser = node || analyser;
       // frequencyData sized for primary analyser; reuse if capture analyser
@@ -1109,21 +1112,17 @@ let currentMode = 0;
 
 function setMode(mode) {
   currentMode = mode;
-  const is3D     = mode === 3;
+  // Delegate canvas visibility + init/teardown + active-button styling to the
+  // viz registry. Legacy control-div toggles stay here since they're tied to
+  // the legacy mode indices (Wave 2+ viz will manage their own controls via
+  // initFn/teardownFn).
+  if (window.Viz) window.Viz.setMode(mode);
+
   const hasSpeed = mode === 4 || mode === 5;
-  canvas2d.style.display = is3D ? 'none' : 'block';
-  document.getElementById('webgl-container').style.display = is3D ? 'block' : 'none';
   document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
   document.getElementById('waves-controls').classList.toggle('visible', mode === 1);
   document.getElementById('fluid-controls').classList.toggle('visible', mode === 7);
-
   document.getElementById('speed-control').style.display = hasSpeed ? 'flex' : 'none';
-
-  document.querySelectorAll('.mode-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', i === mode);
-  });
-
-  if (is3D && !threeReady) initThree();
 }
 
 // ─── Progress UI ──────────────────────────────────────────────────────────────
@@ -1154,20 +1153,16 @@ function loop(ts) {
   if (!startTS) startTS = ts;
   const t = (ts - startTS) / 1000;
 
+  // Legacy globals (bass/mid/treble/bassHistory) — read by mode 0-7 renderFns.
   updateAudioValues();
+  // Unified AudioFrame (mel mags, AGC, onset/BPM, mood) — read by new viz.
+  if (window.AudioEngine) window.AudioEngine.tick(t);
   updateProgressUI();
 
   try {
-    switch (currentMode) {
-      case 0: renderMandala();     break;
-      case 1: renderEmojiWaves();  break;
-      case 2: renderEmojiVortex(); break;
-      case 3: renderBlob(t);       break;
-      case 4: renderHypnoRings();  break;
-      case 5: renderSpiralRings(); break;
-      case 6: renderSubwoofer();   break;
-      case 7: renderFluid();       break;
-    }
+    // Registry routes to the active viz's renderFn. Legacy renderFns ignore
+    // the frame arg and continue reading the back-compat globals.
+    if (window.Viz) window.Viz.renderCurrent(t, window.AudioEngine && window.AudioEngine.currentFrame());
   } catch (e) {
     console.error('[loop] render error:', e);
   }
@@ -2154,6 +2149,26 @@ window.vizDebug = async function () {
     ambientActive: !!(window.AmbientMode && window.AmbientMode.isActive()),
   };
 };
+
+// ─── Visualizer registry ─────────────────────────────────────────────────────
+// Legacy renderX() functions read the back-compat globals bass/mid/treble
+// /bassHistory that updateAudioValues() continues to populate. New viz
+// (Wave 2+) ignore the globals and read the AudioFrame passed as the 2nd arg.
+// `ignored` markers below are just a reminder that legacy renderFns take no
+// args — they're invoked as renderFn(t, frame) but only t matters for Blob.
+
+if (window.Viz) {
+  window.Viz.register({ id:'mandala',      label:'Mandala',      kind:'2d',    renderFn: () => renderMandala() });
+  window.Viz.register({ id:'emoji-waves',  label:'Emoji Waves',  kind:'2d',    renderFn: () => renderEmojiWaves() });
+  window.Viz.register({ id:'emoji-vortex', label:'Emoji Vortex', kind:'2d',    renderFn: () => renderEmojiVortex() });
+  window.Viz.register({ id:'blob',         label:'3D Blob',      kind:'webgl',
+                        initFn:   () => { if (!threeReady) initThree(); },
+                        renderFn: (t) => renderBlob(t) });
+  window.Viz.register({ id:'hypno-rings',  label:'Hypno Rings',  kind:'2d',    renderFn: () => renderHypnoRings() });
+  window.Viz.register({ id:'spiral',       label:'Spiral',       kind:'2d',    renderFn: () => renderSpiralRings() });
+  window.Viz.register({ id:'subwoofer',    label:'Subwoofer',    kind:'2d',    renderFn: () => renderSubwoofer() });
+  window.Viz.register({ id:'ferro',        label:'Ferro',        kind:'2d',    renderFn: () => renderFluid() });
+}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
