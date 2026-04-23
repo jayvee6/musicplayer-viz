@@ -874,3 +874,59 @@ body {
   border-color: rgba(255, 255, 255, 0.35);
   color: #fff;
 }
+
+/* ─── Edge cycle buttons ─────────────────────────────────────────────── */
+.viz-cycle-btn {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 96px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(20, 20, 22, 0.35);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0;              /* collapses the inline span to just the glyph */
+  cursor: pointer;
+  z-index: 5;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.2s;
+  opacity: 0.55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.viz-cycle-btn:hover {
+  background: rgba(20, 20, 22, 0.55);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+  opacity: 1;
+}
+
+.viz-cycle-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#viz-cycle-prev {
+  left: 0;
+  border-left: none;
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+
+#viz-cycle-next {
+  right: 0;
+  border-right: none;
+  border-top-left-radius: 10px;
+  border-bottom-left-radius: 10px;
+}
+
+.viz-cycle-arrow {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 300;
+}
+
+/* Hidden when the user has the full UI dimmed (btn-hide toggles `.hidden` on body). */
+body.hidden .viz-cycle-btn { display: none; }

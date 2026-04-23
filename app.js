@@ -1294,6 +1294,20 @@ document.querySelectorAll('.mode-btn').forEach((btn, i) => {
   btn.addEventListener('click', () => setMode(i));
 });
 
+// Edge cycle buttons — mirror of the iOS swipe-left/right gesture. Wraps
+// around at either end so there's always a next/previous.
+function cycleViz(delta) {
+  if (!window.Viz) return;
+  const entries = window.Viz.entries;
+  if (!entries.length) return;
+  const cur = window.Viz.currentIndex;
+  const n   = entries.length;
+  const next = ((cur < 0 ? 0 : cur) + delta + n) % n;
+  setMode(next);
+}
+document.getElementById('viz-cycle-prev')?.addEventListener('click', () => cycleViz(-1));
+document.getElementById('viz-cycle-next')?.addEventListener('click', () => cycleViz(+1));
+
 document.getElementById('speed-slider').addEventListener('input', e => {
   ringSpeed = e.target.value / 50;
 });
