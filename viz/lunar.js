@@ -523,9 +523,12 @@
     lastT = t;
 
     const f = frame || {};
-    // Slow Y-rotation of the moon; bass nudges the rate slightly so
-    // beats kick the spin forward.
-    rotY += dt * (0.08 + (f.bass || 0) * 0.30);
+    // Shared rotation accumulator with Disco Ball — same formula, same
+    // global so switching between "moon" and "disco" keeps the sphere
+    // spinning continuously with no visual jump.
+    window.vizSharedRotY = (window.vizSharedRotY || 0)
+      + dt * (0.08 + (f.bass || 0) * 0.30);
+    rotY = window.vizSharedRotY;
 
     // Sun orbit — auto-advances so phases cycle across the moon's face
     // like real-world lunar phases. Base rate ~0.04 rad/s = full cycle
