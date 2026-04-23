@@ -156,6 +156,19 @@
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
   }
 
+  // GPU teardown — drop scene + material + geom so switching away doesn't
+  // leak memory. CPU physics state (heights/velocities/targets) stays so
+  // the pool motion doesn't reset on re-entry. Re-init is triggered by
+  // render's `if (!scene) init()` guard.
+  function teardown() {
+    if (scene) {
+      scene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }
+    if (mat) mat.dispose();
+    mat   = null;
+    scene = null;
+  }
+
   // 32 FFT bins → 48 spike targets. Linear oversampling is enough because
   // AudioEngine's magnitudes are already log-weighted at FFT time.
   function resampleMags(src, dst) {
@@ -233,6 +246,7 @@
     kind:     'webgl',
     initFn:   init,
     renderFn: render,
+    teardownFn: teardown,
     controls: [
       { id: 'react', label: 'React', min: 0, max: 2.0, step: 0.05, default: 1.0 },
     ],

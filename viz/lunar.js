@@ -494,6 +494,25 @@
     }
   }
 
+  // Release GPU scene + shader material on mode-out so switching away
+  // doesn't retain the full lunar pipeline (~10 passes incl. composer MRTs).
+  // We deliberately keep tex2K/tex4K loaded — re-downloading the LROC
+  // mosaics on re-entry would stall the first few frames on mobile.
+  // Render's `if (!scene) init()` rebuilds the scene + material.
+  function teardown() {
+    if (scene) {
+      scene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }
+    if (mat) mat.dispose();
+    // composer.dispose() in r128 frees internal render targets; retroPass
+    // references the composer's internal state so it goes with it.
+    if (composer && typeof composer.dispose === 'function') composer.dispose();
+    mat       = null;
+    composer  = null;
+    retroPass = null;
+    scene     = null;
+  }
+
   function use4K(flag) {
     if (!mat) return;
     if (flag) {
@@ -571,6 +590,7 @@
     kind:     'webgl',
     initFn:   init,
     renderFn: render,
+    teardownFn: teardown,
     controls: [
       // One knob only — flip the retro film pass (chromatic aberration,
       // scanlines, grain, vignette, teal/orange grade) on or off.

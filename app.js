@@ -811,6 +811,14 @@ const VERT_SHADER = `
   }
 `;
 
+// Playbook: mobile MAX_STEPS=32, desktop=64. Detect once at module load so
+// the shader gets the right cap baked in when ShaderMaterial compiles it.
+// Old value was a hardcoded 96 — too deep even for desktop, and a ~3x hit
+// on mobile relative to playbook target. Fragment-bound viz this heavy
+// must cap iterations for the low-end device to hit 30fps.
+const BLOB_IS_MOBILE = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
+const BLOB_MAX_STEPS = BLOB_IS_MOBILE ? 32 : 64;
+
 const FRAG_SHADER = `
   precision highp float;
   uniform float u_time;
@@ -848,7 +856,7 @@ const FRAG_SHADER = `
     float t   = 0.0;
     bool  hit = false;
 
-    for (int i = 0; i < 96; i++) {
+    for (int i = 0; i < ${BLOB_MAX_STEPS}; i++) {
       float d = scene(ro + rd * t);
       if (d < 0.0008) { hit = true; break; }
       if (t > 8.0)    break;

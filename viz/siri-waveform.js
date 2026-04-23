@@ -90,7 +90,11 @@
     ctx.lineCap  = 'round';
     ctx.lineJoin = 'round';
 
-    const stepX = 2;
+    // stepX scales with DPR so retina 1440p doesn't blow up to 1,280
+    // iterations × 2 passes × 4 layers = 10,240 lineTo calls/frame. Under
+    // 'lighter' additive blending with a 10px glow stroke, a 4-logical-px
+    // step is visually indistinguishable from 2 at retina viewing distance.
+    const stepX = Math.max(2, Math.floor(dpr * 2));
     const time  = Date.now();
 
     for (let li = 0; li < LAYERS.length; li++) {
