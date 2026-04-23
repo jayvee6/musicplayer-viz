@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Neon Oscilloscope — Prototype</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 2;
+      color: rgba(255,255,255,0.65); font: 12px/1.4 -apple-system, ui-monospace, monospace;
+      padding: 8px 12px; background: rgba(0,0,0,0.45);
+      border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);
+      pointer-events: none; user-select: none; max-width: 320px;
+    }
+    #hud b { color: #fff; }
+    #hud code { color: #8fd; }
+  </style>
+</head>
+<body>
+<div id="hud">
+  <b>Neon Oscilloscope prototype</b><br>
+  Drag to orbit · scroll to zoom<br>
+  Tweak: <code>ribbons</code>, <code>bloomPass</code>, <code>waveCfg</code> in console
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE          from 'three';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ── 1. Renderer / scene / camera ──────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000005, 1);
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 4, 55);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 0, 0);
+
+// ── 2. The ribbons ────────────────────────────────────────────────────────
+// 4 horizontal ribbons stacked along Z. High width-segment count (200) so
+// the wave bends smoothly. Height of 2 means vertices fall on y = ±1, which
+// the pinch logic relies on — top edge pushes +amp, bottom edge pushes −amp.
+
+const RIBBON_Z       = [-7.5, -2.5, 2.5, 7.5];
+const RIBBON_COLORS  = [0x00ffff, 0xff2bd6, 0x3d6bff, 0xb44bff]; // cyan, magenta, blue, purple
+const PLANE_WIDTH    = 100;
+const PLANE_HEIGHT   = 2;
+const WIDTH_SEGMENTS = 200;
+
+const ribbons = RIBBON_Z.map((z, i) => {
+  const geom = new THREE.PlaneGeometry(PLANE_WIDTH, PLANE_HEIGHT, WIDTH_SEGMENTS, 1);
+  const mat  = new THREE.MeshBasicMaterial({
+    color:       RIBBON_COLORS[i],
+    transparent: true,
+    opacity:     0.7,
+    blending:    THREE.AdditiveBlending,
+    depthWrite:  false,
+    side:        THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.position.z = z;
+  scene.add(mesh);
+
+  // Cache original Y per vertex so the per-frame update can push symmetrically
+  // around the centerline regardless of which side the vertex sits on.
+  const pos   = geom.attributes.position;
+  const origY = new Float32Array(pos.count);
+  for (let v = 0; v < pos.count; v++) origY[v] = pos.getY(v);
+  mesh.userData.origY = origY;
+  mesh.userData.idx   = i;
+  return mesh;
+});
+
+// Subtle horizon guide line so orbiting has a reference.
+const guideGeom = new THREE.BufferGeometry();
+guideGeom.setAttribute('position', new THREE.Float32BufferAttribute([
+  -PLANE_WIDTH / 2, 0, 0,
+   PLANE_WIDTH / 2, 0, 0,
+], 3));
+const guideMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.08 });
+scene.add(new THREE.Line(guideGeom, guideMat));
+
+// ── 3. Wave math ──────────────────────────────────────────────────────────
+// Amplitude is composed of three sines at increasing spatial frequency + a
+// smooth noise term (product of two slow trig waves — cheap and repeatable).
+// Each ribbon gets a phase + speed offset so they slide past each other.
+
+const waveCfg = {
+  base1:   { k: 0.20, w: 2.0, a: 1.4 },
+  base2:   { k: 0.55, w: 1.5, a: 0.65 },
+  base3:   { k: 1.10, w: 3.0, a: 0.28 },
+  noiseA:  0.4,
+  taperG:  1.0,   // gamma on the pinch taper (1 = simple sin, <1 = flatter center)
+  master:  1.0,   // global amplitude gain
+};
+
+function waveAmplitude(x, t, idx) {
+  const phase = idx * 1.7;
+  const speed = 1.0 + idx * 0.18;
+  const s1 = Math.sin(x * waveCfg.base1.k + t * waveCfg.base1.w * speed + phase)        * waveCfg.base1.a;
+  const s2 = Math.sin(x * waveCfg.base2.k - t * waveCfg.base2.w * speed + phase * 1.3)  * waveCfg.base2.a;
+  const s3 = Math.sin(x * waveCfg.base3.k + t * waveCfg.base3.w * speed)                * waveCfg.base3.a;
+  // Noise: two incommensurate trig waves multiplied — smooth, seamless, zero-mean.
+  const n  = Math.sin(x * 0.37 + t * 0.62 + idx * 2.1)
+           * Math.cos(x * 0.11 + t * 1.13 + idx * 0.9);
+  return (s1 + s2 + s3 + n * waveCfg.noiseA) * waveCfg.master;
+}
+
+// Pinch taper — zero at the ends, 1 in the middle. sin(πu) is the natural
+// half-cycle bell; gamma lets you flatten (<1) or sharpen (>1) the profile.
+function taper(xNorm) {
+  const s = Math.sin(Math.PI * xNorm);
+  return Math.pow(Math.max(0, s), waveCfg.taperG);
+}
+
+// ── 4. Post-processing ────────────────────────────────────────────────────
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  1.5,   // strength
+  1.0,   // radius
+  0.1,   // threshold
+);
+composer.addPass(bloomPass);
+
+// ── 5. Render loop ────────────────────────────────────────────────────────
+
+function animate() {
+  const t = performance.now() * 0.001;
+
+  for (const ribbon of ribbons) {
+    const pos   = ribbon.geometry.attributes.position;
+    const origY = ribbon.userData.origY;
+    const idx   = ribbon.userData.idx;
+    for (let v = 0; v < pos.count; v++) {
+      const x     = pos.getX(v);
+      const xNorm = (x + PLANE_WIDTH / 2) / PLANE_WIDTH; // 0..1 across width
+      const amp   = waveAmplitude(x, t, idx) * taper(xNorm);
+      // Symmetric pinch: top edge (origY > 0) goes up by amp, bottom edge
+      // (origY < 0) goes down by amp — both edges ride the same waveform so
+      // the ribbon stays a thin strip rather than growing into a blob.
+      const sign  = origY[v] >= 0 ? 1 : -1;
+      pos.setY(v, sign * amp);
+    }
+    pos.needsUpdate = true;
+  }
+
+  controls.update();
+  composer.render();
+  requestAnimationFrame(animate);
+}
+animate();
+
+// ── Resize ────────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+  bloomPass.resolution.set(w, h);
+});
+
+// Expose for console tweaking.
+window.ribbons   = ribbons;
+window.bloomPass = bloomPass;
+window.waveCfg   = waveCfg;
+window.camera    = camera;
+</script>
+</body>
+</html>
