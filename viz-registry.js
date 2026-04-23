@@ -34,15 +34,20 @@
       renderFn:   def.renderFn,
       teardownFn: def.teardownFn || null,
       controls:   Array.isArray(def.controls) ? def.controls : [],
+      layout:     def.layout || null,   // 'vertical' for stacked controls
     });
     appendButton(entries.length - 1);
     appendControls(entries[entries.length - 1]);
   }
 
-  // Builds a <div class="viz-controls"> of <label class="speed-label"><input
-  // type="range">…</label> sliders for any viz that declares `controls`. The
-  // div sits in #sliders-row alongside the legacy vortex/waves/fluid control
-  // groups and is shown only when the viz is active.
+  // Builds a <div class="viz-controls"> for any viz that declares `controls`.
+  // Four control types are supported (type defaults to 'slider' for back-compat):
+  //   - 'slider': <input type="range">     — min, max, step, default (numeric)
+  //   - 'text':   <input type="text">      — default (string), optional width
+  //   - 'button': <button>                  — onClick callback
+  //   - 'toggle': <input type="checkbox">  — default (bool), returns boolean
+  // An optional `layout: 'vertical'` on the viz def stacks children vertically
+  // instead of the default horizontal inline flow.
   function appendControls(entry) {
     if (!entry.controls.length) return;
     const row = document.getElementById('sliders-row');
@@ -51,34 +56,66 @@
     if (!div) {
       div = document.createElement('div');
       div.id = `viz-ctl-${entry.id}`;
-      div.className = 'viz-controls';
+      div.className = 'viz-controls' + (entry.layout === 'vertical' ? ' viz-controls-vertical' : '');
       div.style.display = 'none';
       row.appendChild(div);
     }
     div.innerHTML = '';
     entry.controls.forEach(c => {
+      const type = c.type || 'slider';
+      if (type === 'button') {
+        const btn = document.createElement('button');
+        btn.className   = 'speed-label viz-ctl-button';
+        btn.id          = `viz-ctl-${entry.id}-${c.id}`;
+        btn.textContent = c.label;
+        if (typeof c.onClick === 'function') btn.addEventListener('click', c.onClick);
+        div.appendChild(btn);
+        return;
+      }
       const label = document.createElement('label');
       label.className = 'speed-label';
       label.textContent = c.label;
       const input = document.createElement('input');
-      input.type = 'range';
-      input.id   = `viz-ctl-${entry.id}-${c.id}`;
-      input.min  = String(c.min);
-      input.max  = String(c.max);
-      input.step = String(c.step ?? 1);
-      input.value = String(c.default ?? c.min);
+      input.id = `viz-ctl-${entry.id}-${c.id}`;
+      if (type === 'text') {
+        input.type = 'text';
+        input.value = String(c.default ?? '');
+        if (c.width) input.style.width = c.width;
+        if (c.placeholder) input.placeholder = c.placeholder;
+      } else if (type === 'toggle') {
+        input.type = 'checkbox';
+        input.checked = !!c.default;
+      } else {
+        input.type = 'range';
+        input.min  = String(c.min);
+        input.max  = String(c.max);
+        input.step = String(c.step ?? 1);
+        input.value = String(c.default ?? c.min);
+      }
       label.appendChild(input);
       div.appendChild(label);
     });
   }
 
-  // Returns the current numeric value of a registered control, or the default
-  // if the slider isn't in the DOM yet. viz files call this each frame.
+  // Returns the current value of a registered control.
+  //   sliders → float
+  //   text    → string
+  //   toggle  → boolean
+  //   buttons → null (buttons use onClick)
+  // Falls back to the declared default if the input isn't in the DOM yet.
   function controlValue(vizId, controlId) {
     const input = document.getElementById(`viz-ctl-${vizId}-${controlId}`);
-    if (input) return parseFloat(input.value);
     const entry = entries.find(e => e.id === vizId);
     const ctl   = entry && entry.controls.find(c => c.id === controlId);
+    const type  = ctl ? (ctl.type || 'slider') : 'slider';
+    if (type === 'button') return null;
+    if (type === 'toggle') {
+      return input ? input.checked : !!(ctl && ctl.default);
+    }
+    if (type === 'text') {
+      return input ? input.value : (ctl ? (ctl.default ?? '') : '');
+    }
+    if (input) return parseFloat(input.value);
     return ctl ? (ctl.default ?? ctl.min) : 0;
   }
 
