@@ -53,11 +53,14 @@
     prevToneMappingExp  = renderer.toneMappingExposure;
     prevOutputEncoding  = renderer.outputEncoding;
     prevPixelRatio      = renderer.getPixelRatio();
-    // Match the r160 prototype's pipeline. CRITICAL: the shared r128 renderer
-    // defaults to LinearEncoding; without sRGB gamma on output, four additive
-    // ribbons stack without compression and the core pegs at pure white. ACES
-    // tone mapping would also squash the neon saturation, so keep it off.
-    renderer.toneMapping         = THREE.NoToneMapping;
+    // Reinhard tone mapping (`c / (c + 1)`) before bloom — recommended by
+    // Daniel Sandner's Audio Shader Studio guide for exactly this setup:
+    // additive neon + UnrealBloomPass tends to whiteout without HDR
+    // compression. ACES (disco-chrome's default) would crush neon
+    // saturation; NoToneMapping lets bright peaks peg at 1.0. Reinhard
+    // keeps saturation AND prevents the pure-white core we saw. sRGB
+    // output encoding handles the gamma on top.
+    renderer.toneMapping         = THREE.ReinhardToneMapping;
     renderer.toneMappingExposure = 1.0;
     renderer.outputEncoding      = THREE.sRGBEncoding;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
