@@ -140,7 +140,9 @@
     constructor() {
       // Per-frame scratch — allocated once.
       this.dbSpectrum  = new Float32Array(HALF_N);  // from analyser
+      this.timeDomain  = new Float32Array(FFT_SIZE); // raw ~[-1,1] samples
       this.mags        = new Float32Array(BIN_COUNT);
+      this.waveform    = new Float32Array(256);      // downsampled time-domain
       this.noiseFloor  = new Float32Array(BIN_COUNT).fill(0.01);
       this.peakFloor   = 0.0001;
       this.bassHistory = new Float32Array(16);      // for shader reads
@@ -158,6 +160,10 @@
         isBeatNow:    false,
         bassHistory:  this.bassHistory,
         magnitudes:   this.mags,
+        // Time-domain samples downsampled to 256 points across the FFT window.
+        // Values ~[-1, 1] when analyser has real signal; zeros for DRM playback
+        // (Web Playback SDK doesn't route audio through AnalyserNode).
+        waveform:     this.waveform,
         // Mood defaults neutral; overwritten each tick from window.TrackMeta.
         valence:      0.5,
         energy:       0.5,
@@ -179,6 +185,13 @@
 
       // dB magnitudes from analyser — ~[-140, 0] dB, -Infinity for silent bins.
       node.getFloatFrequencyData(this.dbSpectrum);
+      // Time-domain samples — ~[-1, 1], centered at 0. Used by waveform-style
+      // viz (Neon Oscilloscope). Downsample by 8 so viz can iterate 256 points
+      // instead of 2048 — enough resolution for a 100-unit-wide ribbon.
+      node.getFloatTimeDomainData(this.timeDomain);
+      for (let i = 0; i < this.waveform.length; i++) {
+        this.waveform[i] = this.timeDomain[i * 8];
+      }
 
       this._project();
 

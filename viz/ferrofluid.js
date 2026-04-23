@@ -59,25 +59,31 @@
       float spikeX = uv.x * (Nf - 1.0);
       int iCenter = int(clamp(spikeX, 0.0, Nf - 1.0));
 
-      // Tent influence window over ±2 neighbors, plus a raised valley so
-      // between-spike gaps stay visually connected.
+      // Tent influence window over ±2 neighbors. Divisor 0.75 narrows the
+      // tent so single-bin peaks stay visually isolated — matches a real
+      // audio waveform where one loud frequency stands tall against quiet
+      // neighbors, rather than smearing across the pool.
       float surface = 0.0;
       for (int dx = -2; dx <= 2; dx++) {
         int idx = iCenter + dx;
         if (idx < 0)      idx = 0;
         if (idx > N - 1)  idx = N - 1;
-        float offset = (float(idx) - spikeX) / 1.25;
+        float offset = (float(idx) - spikeX) / 0.75;
         surface = max(surface, u_heights[idx] * tent(offset));
       }
       int iL = iCenter;
       int iR = iCenter + 1; if (iR > N - 1) iR = N - 1;
-      float valley = (u_heights[iL] + u_heights[iR]) * 0.30;
+      // Lower valley coefficient so inter-spike gaps drop further, letting
+      // the peaks feel proportionally taller.
+      float valley = (u_heights[iL] + u_heights[iR]) * 0.18;
       surface = max(surface, valley);
 
       float poolY = 0.04;
-      // Energy scales the displacement ceiling — louder tracks spike higher.
+      // Energy scales the displacement ceiling. Bumped from 0.55 → 0.85 so
+      // loud moments reach near the top of the frame — matches how real
+      // audio peaks dominate the visible vertical range.
       float energyMul = 0.6 + u_energy * 0.8;
-      float maxH = 0.55 * energyMul;
+      float maxH = 0.85 * energyMul;
       float surfaceY = poolY + surface * maxH;
       float pixelY = uv.y;
 

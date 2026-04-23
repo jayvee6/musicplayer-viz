@@ -909,7 +909,7 @@ const fluidSpikes  = new Float32Array(FLUID_N);
 const fluidTargets = new Float32Array(FLUID_N);
 const fluidVels    = new Float32Array(FLUID_N);
 
-let fluidSpikeHeight = 0.55;
+let fluidSpikeHeight = 0.85;  // bumped from 0.55 so peaks dominate the frame
 let fluidStiffness   = 0.18;
 let fluidBlobSize    = 1.0;   // specular highlight brightness (0 = matte)
 let fluidHue         = 280;   // current hue — drifts + snaps on bass hits
@@ -947,7 +947,7 @@ function updateFluidSprings() {
 function drawFerroSpike(cx, spikeH, poolY, spaceW) {
   if (spikeH < 3) return;
   const tipY = poolY - spikeH;
-  const mw   = Math.min(spaceW * 0.40, spikeH * 0.30);   // max half-width
+  const mw   = Math.min(spaceW * 0.30, spikeH * 0.22);   // narrower than before — spikes read as individual peaks
   const bw   = mw * 0.18;                                   // base half-width
   const bulY = tipY + spikeH * 0.42;                        // widest point
 
