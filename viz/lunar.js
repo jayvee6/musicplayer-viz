@@ -389,9 +389,15 @@
       }
 
       if (showBg) {
-        float s = starField(rd, u_time, u_treble, u_beatPulse);
+        // Rotate the sample direction by the moon's rotY so the starfield
+        // and nebula counter-rotate along with the scene — feels like you
+        // are stationed in a 3D space where the moon and stars share a
+        // rotating frame of reference, rather than the stars being painted
+        // onto a skybox pinned to the camera.
+        vec3 rdScene = lrotY(rd, -u_rotY);
+        float s = starField(rdScene, u_time, u_treble, u_beatPulse);
         col = vec3(s) * vec3(0.92, 0.95, 1.0);
-        float neb = lfbm(vec3(rd.xy * 0.9 + vec2(u_time * 0.012, 0.3), 0.5));
+        float neb = lfbm(vec3(rdScene.xy * 0.9 + vec2(u_time * 0.012, 0.3), 0.5));
         vec3 nc = mix(vec3(0.0, 0.01, 0.04), vec3(0.02, 0.0, 0.05), u_valence);
         col += nc * neb * 0.35;
       }
