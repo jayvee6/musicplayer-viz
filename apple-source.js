@@ -165,6 +165,19 @@ async function resume()   { const i = mk(); if (i) return i.play(); }
 async function seekToMs(ms) { const i = mk(); if (i) return i.seekToTime(Math.max(0, ms / 1000)); }
 async function nextTrack()     { const i = mk(); if (i && i.skipToNextItem)     return i.skipToNextItem(); }
 async function previousTrack() { const i = mk(); if (i && i.skipToPreviousItem) return i.skipToPreviousItem(); }
+
+// MusicKit shuffleMode: 0 = off, 1 = songs. repeatMode: 0 = none, 1 = one, 2 = all.
+async function setShuffle(on) {
+  const i = mk(); if (!i) return;
+  try { i.shuffleMode = on ? 1 : 0; } catch {}
+}
+// Normalize the mode string coming from app.js to MusicKit's numeric enum.
+async function setRepeat(mode) {
+  const i = mk(); if (!i) return;
+  const code = mode === 'track' ? 1 : mode === 'context' ? 2 : 0;
+  try { i.repeatMode = code; } catch {}
+}
+
 function getPositionMs()  { const i = mk(); return i ? Math.round((i.currentPlaybackTime || 0) * 1000) : 0; }
 function getDurationMs()  { const i = mk(); return i ? Math.round((i.currentPlaybackDuration || 0) * 1000) : 0; }
 function getCurrentTrackId() { const i = mk(); return (i && i.nowPlayingItem && i.nowPlayingItem.id) || null; }
@@ -212,6 +225,8 @@ const AppleSource = {
   seekToMs,
   nextTrack,
   previousTrack,
+  setShuffle,
+  setRepeat,
   getPositionMs,
   getDurationMs,
   getCurrentTrackId,

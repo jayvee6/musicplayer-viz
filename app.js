@@ -97,7 +97,7 @@ function currentPosSec() {
 }
 
 function setTransportEnabled(on) {
-  ['btn-rewind','play-pause','btn-fwd'].forEach(id => {
+  ['btn-rewind','play-pause','btn-fwd','btn-prev','btn-next'].forEach(id => {
     document.getElementById(id).disabled = !on;
   });
 }
@@ -1289,6 +1289,58 @@ document.getElementById('play-pause').addEventListener('click', togglePlayback);
 
 document.getElementById('btn-rewind').addEventListener('click', () => seekBy(-10));
 document.getElementById('btn-fwd').addEventListener('click',    () => seekBy(+10));
+
+// Shuffle / repeat are source-level toggles (Spotify: PUT /me/player/shuffle +
+// /me/player/repeat; Apple: MusicKit shuffleMode/repeatMode). They apply to
+// remote streaming sources only — local buffer/element playback has no queue.
+// The buttons still toggle their UI state even when no source is active so
+// the preference persists once a source connects.
+let shuffleOn = false;
+const REPEAT_MODES = ['off', 'context', 'track'];
+let repeatIdx = 0;
+
+const btnShuffle = document.getElementById('btn-shuffle');
+const btnRepeat  = document.getElementById('btn-repeat');
+
+function syncShuffleUI() {
+  btnShuffle.classList.toggle('active', shuffleOn);
+  btnShuffle.title = shuffleOn ? 'Shuffle: On' : 'Shuffle: Off';
+}
+
+function syncRepeatUI() {
+  const mode = REPEAT_MODES[repeatIdx];
+  btnRepeat.classList.toggle('active', mode !== 'off');
+  btnRepeat.textContent = mode === 'track' ? '🔂' : '🔁';
+  btnRepeat.title = mode === 'off'     ? 'Repeat: Off'
+                  : mode === 'context' ? 'Repeat: Queue'
+                  :                      'Repeat: One';
+}
+
+btnShuffle.addEventListener('click', async () => {
+  shuffleOn = !shuffleOn;
+  syncShuffleUI();
+  const src = currentStreamingSource();
+  if (src && src.setShuffle) { try { await src.setShuffle(shuffleOn); } catch {} }
+});
+
+btnRepeat.addEventListener('click', async () => {
+  repeatIdx = (repeatIdx + 1) % REPEAT_MODES.length;
+  syncRepeatUI();
+  const src = currentStreamingSource();
+  if (src && src.setRepeat) { try { await src.setRepeat(REPEAT_MODES[repeatIdx]); } catch {} }
+});
+
+document.getElementById('btn-prev').addEventListener('click', async () => {
+  const src = currentStreamingSource();
+  if (src && src.previousTrack) { try { await src.previousTrack(); } catch {} }
+});
+document.getElementById('btn-next').addEventListener('click', async () => {
+  const src = currentStreamingSource();
+  if (src && src.nextTrack) { try { await src.nextTrack(); } catch {} }
+});
+
+syncShuffleUI();
+syncRepeatUI();
 
 document.querySelectorAll('.mode-btn').forEach((btn, i) => {
   btn.addEventListener('click', () => setMode(i));

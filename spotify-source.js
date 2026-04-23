@@ -187,6 +187,28 @@ async function resume()   { return window.SpotifyPlayer.resume(); }
 async function seekToMs(ms) { return window.SpotifyPlayer.seek(ms); }
 async function nextTrack()     { return window.SpotifyPlayer.nextTrack(); }
 async function previousTrack() { return window.SpotifyPlayer.previousTrack(); }
+
+// Shuffle + repeat hit the /me/player/* endpoints directly since the Web
+// Playback SDK doesn't expose toggles. Requires the user-modify-playback-
+// state scope, which SpotifyAuth already requests.
+async function setShuffle(on) {
+  const token = await window.SpotifyAuth.getAccessToken();
+  if (!token) return;
+  await fetch(`https://api.spotify.com/v1/me/player/shuffle?state=${on ? 'true' : 'false'}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+// Repeat modes: 'track' | 'context' (album/playlist) | 'off'
+async function setRepeat(mode) {
+  const token = await window.SpotifyAuth.getAccessToken();
+  if (!token) return;
+  await fetch(`https://api.spotify.com/v1/me/player/repeat?state=${mode}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 function getPositionMs()  { return window.SpotifyPlayer.currentPositionMs(); }
 function getDurationMs()  { return window.SpotifyPlayer.getDurationMs(); }
 function getCurrentTrackId() { return window.SpotifyPlayer.getCurrentTrackId(); }
@@ -206,6 +228,8 @@ const SpotifySource = {
   seekToMs,
   nextTrack,
   previousTrack,
+  setShuffle,
+  setRepeat,
   getPositionMs,
   getDurationMs,
   getCurrentTrackId,

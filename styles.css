@@ -706,6 +706,11 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.transport-btn.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.15);
+}
+
 .transport-btn:disabled {
   opacity: 0.3;
   cursor: default;
@@ -1060,4 +1065,13 @@ body.hidden .viz-cycle-btn { display: none; }
    and toggles don't visually collide. */
 .viz-controls {
   gap: 18px;
+}
+
+/* Live value readout beside a slider (opt-in via control.showValue). */
+.viz-controls .viz-ctl-readout {
+  font-family: -apple-system, ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 36px;
+  text-align: right;
 }
