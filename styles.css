@@ -993,3 +993,46 @@ body.hidden .viz-cycle-btn { display: none; }
   transform: scale(0.97);
   background: rgba(255, 255, 255, 0.25);
 }
+
+/* Toggle (checkbox-type viz control) styled to match the glass chrome. */
+.viz-controls input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.viz-controls input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  transition: left 0.15s, background 0.15s;
+}
+
+.viz-controls input[type="checkbox"]:checked {
+  background: rgba(255, 215, 100, 0.45);
+  border-color: rgba(255, 215, 100, 0.8);
+}
+
+.viz-controls input[type="checkbox"]:checked::after {
+  left: 18px;
+  background: #fff;
+}
+
+/* Fireworks viz has more controls than others; keep each slider narrower
+   so the row doesn't feel over-packed. Scoped to its own control div id. */
+#viz-ctl-fireworks .speed-label input[type="range"] {
+  width: 72px;
+}
