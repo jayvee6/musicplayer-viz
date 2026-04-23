@@ -145,17 +145,34 @@
     const row = document.getElementById('mode-buttons');
     if (!row) return; // DOM not ready — app.js bootstrap will sync on load
     const e   = entries[index];
+    // Dots replace the old long-label buttons. The viz name lives in the
+    // tooltip (title attr for hover) and is revealed big via the
+    // #viz-title-overlay fade on every mode switch.
     const btn = document.createElement('button');
     btn.className       = 'mode-btn' + (index === 0 ? ' active' : '');
     btn.dataset.mode    = String(index);
-    btn.textContent     = e.label;
-    // Prefer app.js's setMode wrapper (which also toggles legacy control divs)
-    // when present; otherwise call the registry directly.
+    btn.title           = e.label;
+    btn.setAttribute('aria-label', e.label);
     btn.addEventListener('click', () => {
       const fn = typeof window.setMode === 'function' ? window.setMode : setMode;
       fn(index);
     });
     row.appendChild(btn);
+  }
+
+  // Title overlay fade — called on every successful mode transition.
+  // Repeated switches restart the fade cleanly without piling up timers.
+  let titleFadeTimer = null;
+  function flashTitle(label) {
+    const el = document.getElementById('viz-title-overlay');
+    if (!el || !label) return;
+    el.textContent = label;
+    el.classList.add('visible');
+    if (titleFadeTimer) clearTimeout(titleFadeTimer);
+    titleFadeTimer = setTimeout(() => {
+      el.classList.remove('visible');
+      titleFadeTimer = null;
+    }, 1100);
   }
 
   // Ensure every registered viz has a button — used as a bootstrap reconciliation
@@ -205,8 +222,14 @@
       if (ctrl) ctrl.style.display = (e.id === next.id && e.controls.length) ? 'flex' : 'none';
     });
 
+    const isNewActive = activeId !== next.id;
     activeId = next.id;
     window.Viz._currentIndex = index; // read by legacy code that did mode === N checks
+
+    // Reveal the viz name briefly on every switch — gives a visual confirmation
+    // beyond the tiny dot toggle. Skip if we re-selected the already-active
+    // mode so idle mouse flutters don't trigger a flash.
+    if (isNewActive) flashTitle(next.label || next.id);
   }
 
   function renderCurrent(t, frame) {
