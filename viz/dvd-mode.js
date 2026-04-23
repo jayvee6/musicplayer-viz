@@ -52,8 +52,12 @@
   function init() {
     reduceMotion = prefersReducedMotion();
     const canvas = document.getElementById('canvas-2d');
-    const W = canvas ? canvas.clientWidth  : window.innerWidth;
-    const H = canvas ? canvas.clientHeight : window.innerHeight;
+    // Prefer canvas.width / dpr — authoritative after resizeCanvas() in
+    // app.js, reads correctly even before first CSS layout. Fall back to
+    // innerWidth for the initial position only.
+    const dpr = window.devicePixelRatio || 1;
+    const W = (canvas && canvas.width)  ? canvas.width  / dpr : window.innerWidth;
+    const H = (canvas && canvas.height) ? canvas.height / dpr : window.innerHeight;
     x = W * 0.30;
     y = H * 0.25;
     // Reduced motion = much slower baseline speed.
@@ -93,8 +97,13 @@
     const canvas = document.getElementById('canvas-2d');
     if (!ctx || !canvas) return;
 
-    const W = canvas.clientWidth;
-    const H = canvas.clientHeight;
+    // canvas.width / dpr is the logical (CSS-pixel) size after
+    // resizeCanvas() in app.js, authoritative even before first CSS layout
+    // (clientWidth/Height are 0 on the first activation frame).
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width / dpr;
+    const H = canvas.height / dpr;
+    if (W <= 1 || H <= 1) return;
     const dt = lastT === 0 ? (1 / 60) : Math.min(0.05, t - lastT);
     lastT = t;
 

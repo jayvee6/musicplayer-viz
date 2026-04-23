@@ -81,12 +81,9 @@
   let lastT     = 0;
   let startT    = null;
 
-  // Save renderer state so other viz see their expected pipeline.
-  let prevToneMapping    = null;
-  let prevOutputEncoding = null;
-  let prevToneMappingExp = null;
-  let prevPhysLights     = null;
-  let prevPixelRatio     = null;
+  // Token from window.vizGL.pushRendererState — snapshot of the renderer
+  // keys we mutated so teardown can restore them.
+  let rendererToken = null;
 
   function init() {
     if (!window.vizGL && typeof window.initThree === 'function') window.initThree();
@@ -99,16 +96,13 @@
     // PointLight(intensity=400) at r128 produces completely different
     // brightness than at r160 → the whole viz looks wrong. Same for
     // pixel ratio — prototype caps at 2x, shared renderer was at 1.5x.
-    prevToneMapping     = renderer.toneMapping;
-    prevOutputEncoding  = renderer.outputEncoding;
-    prevToneMappingExp  = renderer.toneMappingExposure;
-    prevPhysLights      = renderer.physicallyCorrectLights;
-    prevPixelRatio      = renderer.getPixelRatio();
-    renderer.toneMapping          = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure  = 1.0;
-    renderer.outputEncoding       = THREE.sRGBEncoding;
-    renderer.physicallyCorrectLights = true;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    rendererToken = window.vizGL.pushRendererState({
+      toneMapping:             THREE.ACESFilmicToneMapping,
+      toneMappingExposure:     1.0,
+      outputEncoding:          THREE.sRGBEncoding,
+      physicallyCorrectLights: true,
+      pixelRatio:              Math.min(window.devicePixelRatio, 2),
+    });
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
@@ -164,12 +158,8 @@
 
   function teardown() {
     if (!window.vizGL) return;
-    const renderer = window.vizGL.renderer;
-    if (prevToneMapping     !== null) renderer.toneMapping        = prevToneMapping;
-    if (prevOutputEncoding  !== null) renderer.outputEncoding     = prevOutputEncoding;
-    if (prevToneMappingExp  !== null) renderer.toneMappingExposure = prevToneMappingExp;
-    if (prevPhysLights      !== null) renderer.physicallyCorrectLights = prevPhysLights;
-    if (prevPixelRatio      !== null) renderer.setPixelRatio(prevPixelRatio);
+    window.vizGL.popRendererState(rendererToken);
+    rendererToken = null;
   }
 
   function render(t, frame) {

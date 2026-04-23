@@ -69,7 +69,12 @@
     const ctx = window.ctx;
     const canvas = document.getElementById('canvas-2d');
     if (!ctx || !canvas) return;
-    const W = canvas.clientWidth, H = canvas.clientHeight;
+    // canvas.width / dpr is the logical (CSS-pixel) size after
+    // resizeCanvas() in app.js, authoritative even before first CSS layout
+    // (clientWidth/Height are 0 on the first activation frame).
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width / dpr, H = canvas.height / dpr;
+    if (W <= 1 || H <= 1) return;
 
     // Hard-coded defaults — the show looks great without user tuning.
     const launchSpeed    = 7;    // slider units 0..10
@@ -164,7 +169,13 @@
     const ctx = window.ctx;
     const canvas = document.getElementById('canvas-2d');
     if (!ctx || !canvas) return;
-    const W = canvas.clientWidth, H = canvas.clientHeight;
+    // canvas.width / dpr is the logical (CSS-pixel) size after
+    // resizeCanvas() in app.js, authoritative even before first CSS layout
+    // (clientWidth/Height are 0 on the first activation frame, which would
+    // draw rockets at (0,0) on the first frame of the first activation).
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width / dpr, H = canvas.height / dpr;
+    if (W <= 1 || H <= 1) return;
     const dt = lastT === 0 ? (1 / 60) : Math.min(0.05, t - lastT);
     lastT = t;
 

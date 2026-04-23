@@ -29,7 +29,27 @@ let sourceMode = null;
 
 let bass = 0, mid = 0, treble = 0;
 const BASS_HISTORY_LEN = 16;
-const bassHistory = new Array(BASS_HISTORY_LEN).fill(0);
+// Bass history as a Float32Array ring buffer. Pre-fix: plain Array with
+// unshift+pop every frame = O(n) memmove regardless of active viz. Reads are
+// indexed by "frames ago" (age=0 → current bass, age=N-1 → oldest). Callers
+// must go through bassHistoryAt(age) so the ring's write-index rotation is
+// hidden — never read `_bassHistoryRing` directly.
+const _bassHistoryRing = new Float32Array(BASS_HISTORY_LEN);
+let _bassHistoryWrite = 0;     // next slot to write into (mod BASS_HISTORY_LEN)
+
+function _pushBassHistory(sample) {
+  _bassHistoryRing[_bassHistoryWrite] = sample;
+  _bassHistoryWrite = (_bassHistoryWrite + 1) % BASS_HISTORY_LEN;
+}
+
+// age in [0, BASS_HISTORY_LEN). 0 = the sample just pushed this frame, 15 =
+// the oldest still retained. Viz callers walk this sequentially with ever-
+// larger `age` to drive outward-traveling ripples (Waves / Vortex / Hypno
+// Rings / Subwoofer depth lines).
+function bassHistoryAt(age) {
+  const i = (_bassHistoryWrite - 1 - age + BASS_HISTORY_LEN) % BASS_HISTORY_LEN;
+  return _bassHistoryRing[i];
+}
 
 function initAudio() {
   audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
@@ -73,7 +93,15 @@ function ensureStreamAudio() {
   streamAudio = new Audio();
   streamAudio.crossOrigin = 'anonymous';
   streamAudio.preload     = 'auto';
-  streamAudio.addEventListener('ended', () => { isPlaying = false; syncPlayBtn(); });
+  streamAudio.addEventListener('ended', () => {
+    // Element-mode has no auto-advance path in this app — the track is over
+    // and nothing is queued. Drop transport back to disabled so the UI
+    // reflects "no current track playing" rather than a stale Play button
+    // that re-triggers the just-ended clip.
+    isPlaying = false;
+    syncPlayBtn();
+    setTransportEnabled(false);
+  });
   streamMediaSource = audioCtx.createMediaElementSource(streamAudio);
   streamMediaSource.connect(analyser);
 }
@@ -149,6 +177,12 @@ function stopOtherMode(nextMode) {
     if (s && s.pause) { try { s.pause(); } catch {} }
   }
   isPlaying = false;
+  // Honest transport state: we just tore down whatever was playing. Loaders
+  // that continue synchronously (loadRemoteTrack, loadStreamUrl) flip this
+  // right back to true in the same task so no paint is missed. Async loaders
+  // (loadAudio, loadTrackFromUrl — they decode on a callback) leave the
+  // buttons correctly disabled until the new clip is ready.
+  setTransportEnabled(false);
 }
 
 function loadAudio(file) {
@@ -279,7 +313,7 @@ function updateAudioValues() {
   } else if (sourceMode === 'remote') {
     frequencyData.fill(0);
     bass = mid = treble = 0;
-    bassHistory.unshift(0); bassHistory.pop();
+    _pushBassHistory(0);
     return;
   } else if (activeAnalyser) {
     activeAnalyser.getByteFrequencyData(frequencyData);
@@ -301,8 +335,7 @@ function updateAudioValues() {
   mid    = mSum / (midEnd - bassEnd) / 255;
   treble = tSum / (len - midEnd)     / 255;
 
-  bassHistory.unshift(bass);
-  bassHistory.pop();
+  _pushBassHistory(bass);
 }
 
 // ─── Canvas 2D ───────────────────────────────────────────────────────────────
@@ -407,7 +440,7 @@ function renderEmojiWaves() {
   const RINGS = waveRingCount;
   for (let ring = 0; ring < RINGS; ring++) {
     // Outer rings read older bass values → undulating delay
-    const delayedBass = ring === 0 ? bass : bassHistory[Math.min(ring * 2, BASS_HISTORY_LEN - 1)];
+    const delayedBass = ring === 0 ? bass : bassHistoryAt(Math.min(ring * 2, BASS_HISTORY_LEN - 1));
     const baseR  = (ring + 1) * Math.min(W, H) * waveSpacing;
     const r      = baseR * (1 + delayedBass * 0.45);
     const count  = ring === 0 ? 1 : ring * 6;
@@ -454,7 +487,7 @@ let phylloZoom   = 1.0;  // Z slider → overall scale (0.2–3.0; slider divide
 const VORTEX_ARMS  = 12;
 const VORTEX_STEPS = 13; // emojis per arm
 
-// Bass-history ripple: each arm step reads bassHistory[step * rippleStepSize].
+// Bass-history ripple: each arm step reads bassHistoryAt(step * rippleStepSize).
 // Inner step reacts to current bass; outer steps react to older values.
 // The delay IS the outward-traveling wave — no separate phase or energy state.
 let rippleAmplitude = 12;  // Ripple slider: max px of radial displacement (0–30)
@@ -487,7 +520,7 @@ function renderEmojiVortex() {
 
       // Inner step (0) reacts to current bass; each outer step reads an older
       // history entry — the delay creates the outward-traveling ripple.
-      const delayedBass = step === 0 ? bass : bassHistory[Math.min(step * rippleStepSize, BASS_HISTORY_LEN - 1)];
+      const delayedBass = step === 0 ? bass : bassHistoryAt(Math.min(step * rippleStepSize, BASS_HISTORY_LEN - 1));
       const displace    = delayedBass * rippleAmplitude;
 
       const finalAngle = baseAngle + r * twist + tunnelRot;
@@ -542,7 +575,7 @@ function renderHypnoRings() {
   // outward-traveling ripple, same pattern as Emoji Waves.
   for (let i = numRings; i >= 1; i--) {
     const histIdx     = Math.min(i - 1, BASS_HISTORY_LEN - 1);
-    const delayedBass = bassHistory[histIdx];
+    const delayedBass = bassHistoryAt(histIdx);
     const r = i * SPACING - ringOffset + delayedBass * 18;
     if (r <= 0) continue;
 
@@ -591,7 +624,7 @@ function renderSubwoofer() {
   // Wide toroidal ring. Radial gradient fakes the curved cross-section:
   // shadow at inner junction, rising to a gloss highlight, falling to outer rim.
   // On bass the surround inner edge flexes outward (cone pumps forward).
-  const surroundFlex  = bassHistory[Math.min(8, BASS_HISTORY_LEN - 1)] * 14;
+  const surroundFlex  = bassHistoryAt(Math.min(8, BASS_HISTORY_LEN - 1)) * 14;
   const surroundInner = coneR + surroundFlex;  // inner edge rides with the cone
 
   const sg = ctx.createRadialGradient(cx, cy, surroundInner, cx, cy, surroundR);
@@ -628,7 +661,7 @@ function renderSubwoofer() {
   for (let i = 1; i <= NUM_DEPTH; i++) {
     const t           = i / (NUM_DEPTH + 1);
     const baseDepthR  = capR_rest * 1.4 + (coneEdge - capR_rest * 1.4) * t;
-    const ripple      = bassHistory[Math.min(Math.round(t * (BASS_HISTORY_LEN - 1)), BASS_HISTORY_LEN - 1)];
+    const ripple      = bassHistoryAt(Math.min(Math.round(t * (BASS_HISTORY_LEN - 1)), BASS_HISTORY_LEN - 1));
     const dr          = baseDepthR + ripple * 28 * t;
     if (dr <= 0 || dr > coneEdge) continue;
     ctx.beginPath();
@@ -882,7 +915,61 @@ function initThree() {
 
   // Shared renderer + camera — each viz can build its own scene + mesh on top.
   // A1 (Kaleidoscope) onwards uses this to avoid a per-viz WebGLRenderer.
-  window.vizGL = { renderer: threeRenderer, camera: threeCamera };
+  //
+  // pushRendererState / popRendererState — save/restore renderer pipeline keys
+  // so viz that need a custom pipeline (ACES tone mapping in disco-chrome,
+  // Reinhard + sRGB in neon-oscilloscope) don't leak that state to siblings
+  // when the user switches modes. Each viz's init() calls push with the keys
+  // it plans to mutate; teardown() calls pop with the returned token.
+  //
+  // Supported keys (only these — anything else is silently ignored so typos
+  // don't create phantom restores):
+  //   toneMapping, toneMappingExposure, outputEncoding,
+  //   physicallyCorrectLights, pixelRatio
+  //
+  // Returns a token = snapshot of the pre-change values for exactly the keys
+  // that were in `changes`. Pop restores only those keys.
+  const RENDERER_STATE_KEYS = [
+    'toneMapping',
+    'toneMappingExposure',
+    'outputEncoding',
+    'physicallyCorrectLights',
+    'pixelRatio',
+  ];
+
+  function pushRendererState(changes) {
+    if (!changes || typeof changes !== 'object') return null;
+    const renderer = threeRenderer;
+    const token = {};
+    for (const key of RENDERER_STATE_KEYS) {
+      if (!(key in changes)) continue;
+      if (key === 'pixelRatio') {
+        token.pixelRatio = renderer.getPixelRatio();
+        renderer.setPixelRatio(changes.pixelRatio);
+      } else {
+        token[key] = renderer[key];
+        renderer[key] = changes[key];
+      }
+    }
+    return token;
+  }
+
+  function popRendererState(token) {
+    if (!token) return;
+    const renderer = threeRenderer;
+    for (const key of RENDERER_STATE_KEYS) {
+      if (!(key in token)) continue;
+      if (key === 'pixelRatio') renderer.setPixelRatio(token.pixelRatio);
+      else                      renderer[key] = token[key];
+    }
+  }
+
+  window.vizGL = {
+    renderer: threeRenderer,
+    camera:   threeCamera,
+    pushRendererState,
+    popRendererState,
+  };
 }
 
 // Expose initThree so a non-Blob WebGL viz (Kaleidoscope, CosmicWave, Lunar)

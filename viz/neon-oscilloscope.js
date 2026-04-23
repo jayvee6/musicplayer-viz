@@ -38,21 +38,16 @@
   let bloomPass = null;
   let startT    = null;
 
-  // Saved renderer state so we don't leak neon linear output into other viz.
-  let prevToneMapping    = null;
-  let prevToneMappingExp = null;
-  let prevOutputEncoding = null;
-  let prevPixelRatio     = null;
+  // Token from window.vizGL.pushRendererState — snapshot of the renderer
+  // keys we mutated so teardown can restore them (so we don't leak neon
+  // linear output into other viz).
+  let rendererToken = null;
 
   function init() {
     if (!window.vizGL && typeof window.initThree === 'function') window.initThree();
     if (!window.vizGL) { console.warn('[neon-oscilloscope] renderer not ready'); return; }
     const renderer = window.vizGL.renderer;
 
-    prevToneMapping     = renderer.toneMapping;
-    prevToneMappingExp  = renderer.toneMappingExposure;
-    prevOutputEncoding  = renderer.outputEncoding;
-    prevPixelRatio      = renderer.getPixelRatio();
     // Reinhard tone mapping (`c / (c + 1)`) before bloom — recommended by
     // Daniel Sandner's Audio Shader Studio guide for exactly this setup:
     // additive neon + UnrealBloomPass tends to whiteout without HDR
@@ -60,10 +55,12 @@
     // saturation; NoToneMapping lets bright peaks peg at 1.0. Reinhard
     // keeps saturation AND prevents the pure-white core we saw. sRGB
     // output encoding handles the gamma on top.
-    renderer.toneMapping         = THREE.ReinhardToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    renderer.outputEncoding      = THREE.sRGBEncoding;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    rendererToken = window.vizGL.pushRendererState({
+      toneMapping:         THREE.ReinhardToneMapping,
+      toneMappingExposure: 1.0,
+      outputEncoding:      THREE.sRGBEncoding,
+      pixelRatio:          Math.min(window.devicePixelRatio, 2),
+    });
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000005);
@@ -119,15 +116,15 @@
 
   function teardown() {
     if (!window.vizGL) return;
-    const renderer = window.vizGL.renderer;
-    if (prevToneMapping    !== null) renderer.toneMapping         = prevToneMapping;
-    if (prevToneMappingExp !== null) renderer.toneMappingExposure = prevToneMappingExp;
-    if (prevOutputEncoding !== null) renderer.outputEncoding      = prevOutputEncoding;
-    if (prevPixelRatio     !== null) renderer.setPixelRatio(prevPixelRatio);
+    window.vizGL.popRendererState(rendererToken);
+    rendererToken = null;
+    // Reset startT so re-entering the viz doesn't jolt the elapsed-time
+    // clock with whatever stale value the previous session left behind.
+    startT = null;
   }
 
   // Envelope sample of the time-domain waveform at position `x`. Takes the
-  // absolute value of 9 adjacent samples and averages — this is a boxcar
+  // absolute value of 5 adjacent samples and averages — this is a boxcar
   // low-pass in amplitude space, so opposite-sign swings within the window
   // don't cancel (like a naive average would) but successive-sample
   // jaggedness smooths into the Siri-waveform envelope curve. Per-ribbon
@@ -211,8 +208,13 @@
   }
 
   function render(t, frame) {
-    if (!scene) init();
-    if (!scene) return;
+    // All-or-nothing: `composer` is the last field init() sets, so if it's
+    // truthy every other field (scene / camera / ribbons / bloomPass) is
+    // populated too. If init failed partway (missing window.vizGL, shader
+    // compile error, OOM, etc.) composer is still null and we bail cleanly
+    // instead of throwing on `ribbons.forEach` / `bloomPass.strength` etc.
+    if (!composer) init();
+    if (!composer || !scene || !ribbons || !bloomPass) return;
     if (startT === null) startT = t;
     const elapsed = t - startT;
 

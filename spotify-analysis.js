@@ -9,43 +9,88 @@
 // as the real FFT path post-AGC, so downstream bass/mid/treble computation +
 // OnsetBPMDetector work without further scaling.
 
+// Cache entry shape: { state: 'loading' | 'ready' | 'failed', data, promise, ts }
+//   - 'loading': fetch in flight. `promise` resolves to the final `data` (or null).
+//     `data` is null until resolution.
+//   - 'ready':   fetch succeeded and data has segments. `data` holds the compact
+//                analysis object. Stays cached for the life of the page — audio
+//                analysis is immutable per trackId.
+//   - 'failed':  fetch returned no usable data (404, network error, empty body,
+//                token refresh miss, etc.). `data` is null. After
+//                FAILED_RETRY_MS we will refetch on the next loadForTrack call,
+//                so a transient token-refresh miss eventually recovers rather
+//                than permanently blocking synth playback.
 const cache = new Map();
+
+// How long a 'failed' entry sits before loadForTrack will refetch. 30s is long
+// enough that we don't hammer the API on a genuine 404, short enough that a
+// user who refreshes their Spotify token or reconnects a flaky network sees
+// the synth spectrum come back without a full reload.
+const FAILED_RETRY_MS = 30_000;
+
+function _doFetch(trackId) {
+  const entry = { state: 'loading', data: null, promise: null, ts: Date.now() };
+  entry.promise = (async () => {
+    try {
+      const token = await window.SpotifyAuth.getAccessToken();
+      if (!token) {
+        cache.set(trackId, { state: 'failed', data: null, promise: null, ts: Date.now() });
+        return null;
+      }
+      const res = await fetch(`https://api.spotify.com/v1/audio-analysis/${trackId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        // 404 is common — Spotify doesn't analyze everything. 401 means the
+        // access token expired mid-flight; a future call after refresh should
+        // retry, which the FAILED_RETRY_MS window enables.
+        cache.set(trackId, { state: 'failed', data: null, promise: null, ts: Date.now() });
+        return null;
+      }
+      const raw = await res.json();
+      const data = {
+        segments: (raw.segments || []).map(s => ({
+          start: s.start, duration: s.duration,
+          loudness_start:    s.loudness_start,
+          loudness_max:      s.loudness_max,
+          loudness_max_time: s.loudness_max_time,
+          timbre: s.timbre || [],
+        })),
+        beats: (raw.beats || []).map(b => ({ start: b.start, duration: b.duration, confidence: b.confidence })),
+      };
+      cache.set(trackId, { state: 'ready', data, promise: null, ts: Date.now() });
+      return data;
+    } catch (e) {
+      // Network error, JSON parse error, token refresh throw — all retryable
+      // after the window expires.
+      cache.set(trackId, { state: 'failed', data: null, promise: null, ts: Date.now() });
+      return null;
+    }
+  })();
+  cache.set(trackId, entry);
+  return entry.promise;
+}
 
 async function loadForTrack(trackId) {
   if (!trackId) return null;
   const cached = cache.get(trackId);
-  if (cached !== undefined) return cached; // may be a promise, compact data, or null
-
-  const promise = (async () => {
-    const token = await window.SpotifyAuth.getAccessToken();
-    if (!token) return null;
-    const res = await fetch(`https://api.spotify.com/v1/audio-analysis/${trackId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null; // 404 is common — Spotify doesn't analyze everything
-    const data = await res.json();
-    return {
-      segments: (data.segments || []).map(s => ({
-        start: s.start, duration: s.duration,
-        loudness_start:    s.loudness_start,
-        loudness_max:      s.loudness_max,
-        loudness_max_time: s.loudness_max_time,
-        timbre: s.timbre || [],
-      })),
-      beats: (data.beats || []).map(b => ({ start: b.start, duration: b.duration, confidence: b.confidence })),
-    };
-  })();
-
-  cache.set(trackId, promise);
-  // Replace the promise with the resolved value so synchronous fill reads the
-  // unwrapped data without awaiting.
-  promise.then(v => cache.set(trackId, v), () => cache.set(trackId, null));
-  return promise;
+  if (cached) {
+    if (cached.state === 'ready')   return cached.data;
+    if (cached.state === 'loading') return cached.promise;
+    if (cached.state === 'failed') {
+      // Retry only after the cooldown window — a burst of callers (e.g. the
+      // DRM path polling every frame) should not spin up N parallel fetches
+      // for the same 404.
+      if (Date.now() - cached.ts < FAILED_RETRY_MS) return null;
+      // Fall through — stale failure, refetch below.
+    }
+  }
+  return _doFetch(trackId);
 }
 
 function hasTrack(trackId) {
-  const a = cache.get(trackId);
-  return !!(a && typeof a.then !== 'function' && a.segments && a.segments.length);
+  const e = cache.get(trackId);
+  return !!(e && e.state === 'ready' && e.data && e.data.segments && e.data.segments.length);
 }
 
 function binarySearch(arr, targetStart) {
@@ -84,8 +129,9 @@ function segmentLoudnessAt(seg, posSec, nextSeg) {
 // analysis data isn't loaded or the track has no segments. On success, values
 // are already in the post-AGC 0..1 range.
 function fillMagnitudes(out, trackId, posSec) {
-  const a = cache.get(trackId);
-  if (!a || typeof a.then === 'function' || !a.segments || !a.segments.length) return false;
+  const e = cache.get(trackId);
+  if (!e || e.state !== 'ready' || !e.data || !e.data.segments || !e.data.segments.length) return false;
+  const a = e.data;
 
   const segIdx = binarySearch(a.segments, posSec);
   const seg    = a.segments[segIdx];

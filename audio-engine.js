@@ -63,34 +63,53 @@
   // ── Onset / BPM detector ────────────────────────────────────────────────
   class OnsetBPMDetector {
     constructor() {
-      this.bassHistory = [];
-      this.historyLen  = 32;
-      this.onsets      = [];
-      this.maxOnsets   = 16;
-      this.lastBeatT   = 0;
-      this.lastBpm     = 0;
-      this.minGapSec   = 0.20;
-      this.kSigma      = 1.3;
-      this.silenceFloor = 0.15;
+      // Ring buffer: fixed-size Float32Array + monotonic write index. The
+      // most-recent sample lives at (writeIdx - 1 + len) % len; older samples
+      // extend backward in time. µ/σ are computed in-place with no allocation
+      // per frame (pre-fix: Array.push + shift() + slice() = ~15 KB/s GC).
+      this.historyLen     = 32;
+      this.bassHistory    = new Float32Array(this.historyLen);
+      this.bassWriteIdx   = 0;   // next slot to write into
+      this.bassCount      = 0;   // how many real samples written (caps at historyLen)
+      this.onsets         = [];
+      this.maxOnsets      = 16;
+      this.lastBeatT      = 0;
+      this.lastBpm        = 0;
+      this.minGapSec      = 0.20;
+      this.kSigma         = 1.3;
+      this.silenceFloor   = 0.15;
     }
 
     // t in seconds. Returns {bpm, beatPulse, isBeatNow}.
     ingest(bass, t) {
-      this.bassHistory.push(bass);
-      if (this.bassHistory.length > this.historyLen) this.bassHistory.shift();
+      const len = this.historyLen;
+      this.bassHistory[this.bassWriteIdx] = bass;
+      this.bassWriteIdx = (this.bassWriteIdx + 1) % len;
+      if (this.bassCount < len) this.bassCount++;
 
-      if (this.bassHistory.length < this.historyLen / 2) {
+      if (this.bassCount < len / 2) {
         return { bpm: this.lastBpm, beatPulse: this._decay(t), isBeatNow: false };
       }
 
       // Threshold = µ + kσ over window (exclude the current sample, like iOS).
-      const w = this.bassHistory.slice(0, -1);
+      // "Current" = slot just written, at (writeIdx - 1 + len) % len. Exclude it
+      // from the sum by iterating count-1 samples backward from the slot before it.
+      const h          = this.bassHistory;
+      const currentIdx = (this.bassWriteIdx - 1 + len) % len;
+      const nSamples   = this.bassCount - 1;
       let mu = 0;
-      for (let i = 0; i < w.length; i++) mu += w[i];
-      mu /= w.length;
+      for (let i = 0; i < nSamples; i++) {
+        const idx = (currentIdx - 1 - i + len) % len;
+        mu += h[idx];
+      }
+      mu /= nSamples;
       let varSum = 0;
-      for (let i = 0; i < w.length; i++) { const d = w[i] - mu; varSum += d * d; }
-      const sigma = Math.sqrt(varSum / w.length);
+      for (let i = 0; i < nSamples; i++) {
+        const idx = (currentIdx - 1 - i + len) % len;
+        const d   = h[idx] - mu;
+        varSum += d * d;
+      }
+      const sigma = Math.sqrt(varSum / nSamples);
 
       const threshold = mu + this.kSigma * sigma;
       const rising    = bass > threshold;
@@ -128,10 +147,12 @@
     }
 
     reset() {
-      this.bassHistory.length = 0;
-      this.onsets.length      = 0;
-      this.lastBeatT = 0;
-      this.lastBpm   = 0;
+      this.bassHistory.fill(0);
+      this.bassWriteIdx  = 0;
+      this.bassCount     = 0;
+      this.onsets.length = 0;
+      this.lastBeatT     = 0;
+      this.lastBpm       = 0;
     }
   }
 
@@ -231,6 +252,14 @@
     // loaded; no-op cleanly if it hasn't been (defensive against load
     // order, though index.html loads envelopes.js before audio-engine).
     _smoothMags(t) {
+      // Handle time going backward (tab re-activation / engine re-init /
+      // rAF restart with a fresh timeline): re-seed lastT and skip smoothing
+      // this frame rather than compounding a huge dt or stalling on a near-zero
+      // clamp.
+      if (t < this.lastT) {
+        this.lastT = t;
+        return;
+      }
       const dt = this.lastT === 0 ? (1 / 60) : Math.min(0.1, Math.max(0.001, t - this.lastT));
       this.lastT = t;
       if (window.VizEnv && typeof window.VizEnv.followArray === 'function') {
@@ -341,7 +370,18 @@
 
     currentFrame() { return this.frame; }
 
-    reset() { this.onset.reset(); this.peakFloor = 0.0001; this.noiseFloor.fill(0.01); }
+    // Called on track/source switch. Zeroes every stateful buffer so the new
+    // clip starts from silence instead of bleeding the prior track's EMA tail
+    // (~120ms of ghosted Spectrogram / Siri strand heights) into the opener.
+    reset() {
+      this.onset.reset();
+      this.peakFloor = 0.0001;
+      this.noiseFloor.fill(0.01);
+      this.mags.fill(0);
+      this.magsSmooth.fill(0);
+      this.bassHistory.fill(0);
+      this.lastT = 0;
+    }
   }
 
   window.AudioEngine = new AudioEngine();

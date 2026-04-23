@@ -33,8 +33,13 @@
   let waveTex   = null;
   let magsBuf   = null;
   let waveBuf   = null;
-  let lastMagsT = -1;
-  let lastWaveT = -1;
+  // NaN sentinel — `NaN === anything` is always false, so the first compare
+  // after init always takes the upload path regardless of whether the audio
+  // engine has ticked (frame.time = 0 on the first frame or after reset
+  // would spuriously match a numeric default like -1 and hand back an
+  // unpopulated cached texture).
+  let lastMagsT = NaN;
+  let lastWaveT = NaN;
 
   // LuminanceFormat + UnsignedByteType is the safest WebGL1 / r128 combo —
   // no float-texture extension required, one channel so both `.r` and `.x`
