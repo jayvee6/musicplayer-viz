@@ -181,9 +181,33 @@
       node.getFloatFrequencyData(this.dbSpectrum);
 
       this._project();
+
+      // DRM fallback: when the analyser has no live signal (remote Spotify
+      // playback without tab capture / mic) AND Spotify audio-analysis is
+      // loaded for the current track, synthesize the 32-bin spectrum from
+      // segment loudness + timbre. Synth values land in post-AGC range so
+      // gate + agc are skipped — running them would renormalize and kill
+      // the dynamics we deliberately encoded.
+      const synth = va.getSynthSource && va.getSynthSource();
+      const silent = synth && !this._hasSignal();
+      if (silent && window.SpotifyAnalysis &&
+          window.SpotifyAnalysis.fillMagnitudes(this.mags, synth.trackId, synth.posSec)) {
+        this._publish(t);
+        return;
+      }
+
       this._gate();
       this._agc();
       this._publish(t);
+    }
+
+    // True if the mel-projected magnitudes carry meaningful energy. Threshold
+    // deliberately loose — post-AGC idle floor can sit around 0.01 under real
+    // FFT; anything below 0.004 means the analyser saw effectively nothing.
+    _hasSignal() {
+      const m = this.mags;
+      for (let b = 0; b < m.length; b++) if (m[b] > 0.004) return true;
+      return false;
     }
 
     // dB → linear magnitude, then mel-bin average, then sqrt (matches iOS).

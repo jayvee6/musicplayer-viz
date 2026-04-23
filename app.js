@@ -52,6 +52,18 @@ function initAudio() {
       // frequencyData sized for primary analyser; reuse if capture analyser
       // matches fftSize (it does — we set it the same in audio-capture).
     },
+    // Synth source for DRM Spotify playback — audio-engine falls back to
+    // this when the analyser has no live signal (remote mode, capture off).
+    // Returns null for local / element / Apple / muted / not-yet-loaded.
+    getSynthSource() {
+      if (sourceMode !== 'remote') return null;
+      const src = currentStreamingSource && currentStreamingSource();
+      if (src !== window.SpotifySource) return null;
+      const trackId = src.getCurrentTrackId && src.getCurrentTrackId();
+      if (!trackId || !window.SpotifyAnalysis || !window.SpotifyAnalysis.hasTrack(trackId)) return null;
+      const posSec = currentPosSec();
+      return { trackId, posSec };
+    },
   };
 }
 
@@ -2101,6 +2113,11 @@ function onRemoteTrackChange(source, track) {
                      : source === window.AppleSource   ? 'apple'
                      : null;
     if (providerId) window.TrackMeta.set({ source: providerId, id: track.id });
+  }
+  // Prefetch Spotify audio-analysis so audio-engine can synthesize a 32-bin
+  // spectrum for DRM playback (Web Playback SDK blocks FFT). No-op on Apple.
+  if (source === window.SpotifySource && window.SpotifyAnalysis && track.id) {
+    window.SpotifyAnalysis.loadForTrack(track.id).catch(() => {});
   }
 }
 if (window.SpotifySource && window.SpotifySource.onTrackChange) {

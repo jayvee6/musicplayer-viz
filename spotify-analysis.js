@@ -1,15 +1,14 @@
-// Synthesizes bass / mid / treble from Spotify's Audio Analysis API, since the
-// Web Playback SDK audio is DRM-protected and unreachable by AnalyserNode.
+// Synthesizes a 32-bin mel-like spectrum + beatPulse from Spotify's Audio
+// Analysis API, since the Web Playback SDK audio is DRM-protected and
+// unreachable by AnalyserNode.
 //
-// For each frame, given current playback position, we find the active segment
-// (binary search), interpolate loudness across its rising/falling phases, and
-// add a decaying beat pulse on each beat start — the combination gives a
-// loudness-envelope-plus-kick feel that matches tracks' energy without real FFT.
+// Per frame: given current playback position, find the active segment (binary
+// search), interpolate loudness across its rising/falling phases, shape a
+// spectrum from timbre coefficients (brightness + flatness), and add a
+// decaying beat bump on each beat start. Values land in the same ~0..1 range
+// as the real FFT path post-AGC, so downstream bass/mid/treble computation +
+// OnsetBPMDetector work without further scaling.
 
-// Cached shape:   { segments: [...], beats: [...] }
-// In-flight shape: Promise resolving to the above (or null on failure).
-// We store the promise so concurrent callers during the initial fetch share
-// one network request instead of racing two.
 const cache = new Map();
 
 async function loadForTrack(trackId) {
@@ -38,13 +37,17 @@ async function loadForTrack(trackId) {
   })();
 
   cache.set(trackId, promise);
-  // Replace the promise with the resolved value so synchronous synthesize()
-  // reads the unwrapped data without awaiting.
+  // Replace the promise with the resolved value so synchronous fill reads the
+  // unwrapped data without awaiting.
   promise.then(v => cache.set(trackId, v), () => cache.set(trackId, null));
   return promise;
 }
 
-// Returns the index of the segment containing targetStart, clamped to valid range.
+function hasTrack(trackId) {
+  const a = cache.get(trackId);
+  return !!(a && typeof a.then !== 'function' && a.segments && a.segments.length);
+}
+
 function binarySearch(arr, targetStart) {
   let lo = 0, hi = arr.length - 1;
   while (lo <= hi) {
@@ -76,36 +79,55 @@ function segmentLoudnessAt(seg, posSec, nextSeg) {
   return seg.loudness_max + (endLoud - seg.loudness_max) * r;
 }
 
-function synthesize(trackId, posSec) {
+// Fills `out` (Float32Array of length 32) with a synthesized spectrum for the
+// current playback position. Returns true if synthesis succeeded, false if
+// analysis data isn't loaded or the track has no segments. On success, values
+// are already in the post-AGC 0..1 range.
+function fillMagnitudes(out, trackId, posSec) {
   const a = cache.get(trackId);
-  // Ignore pending-promise entries — they're unresolved, treat as "no data yet".
-  if (!a || typeof a.then === 'function' || !a.segments || !a.segments.length) {
-    return { bass: 0, mid: 0, treble: 0 };
-  }
+  if (!a || typeof a.then === 'function' || !a.segments || !a.segments.length) return false;
 
-  const idx  = binarySearch(a.segments, posSec);
-  const seg  = a.segments[idx];
-  const next = a.segments[idx + 1] || null;
-  const loud = normDb(segmentLoudnessAt(seg, posSec, next));
+  const segIdx = binarySearch(a.segments, posSec);
+  const seg    = a.segments[segIdx];
+  const next   = a.segments[segIdx + 1] || null;
+  const loud   = normDb(segmentLoudnessAt(seg, posSec, next));
 
+  // timbre[1] = brightness (higher → more treble tilt)
+  // timbre[2] = flatness  (higher → less tilted, more evenly-distributed)
+  // Both are roughly [-100, 100]; normalize to [0, 1] with a 0.5-centered floor.
+  const brightness = Math.max(0, Math.min(1, ((seg.timbre[1] || 0) + 80) / 160));
+  const flatness   = Math.max(0, Math.min(1, ((seg.timbre[2] || 0) + 80) / 160));
+
+  // Beat pulse within the active beat window — bass-weighted so detection
+  // downstream reads the same "kick → spike" shape as the real FFT path.
   let beatPulse = 0;
   if (a.beats.length) {
     const beat = a.beats[binarySearch(a.beats, posSec)];
-    // Only fire within the actual beat window — past the last beat's end,
-    // pos stays >= beat.start forever so we'd pulse every frame.
     if (beat && posSec >= beat.start && posSec < beat.start + beat.duration) {
       const phase = (posSec - beat.start) / Math.max(0.08, beat.duration);
       beatPulse = Math.exp(-phase * 5) * (beat.confidence || 0.5);
     }
   }
 
-  // timbre[1] is a brightness coefficient, roughly [-100, 100].
-  const brightness = Math.max(0, Math.min(1, ((seg.timbre[1] || 0) + 80) / 160));
-
-  const bass   = Math.min(1, loud * 0.55 + beatPulse * 0.75);
-  const treble = Math.min(1, 0.2 + brightness * 0.55 + loud * 0.25);
-  const mid    = Math.min(1, (bass + treble) * 0.5);
-  return { bass, mid, treble };
+  const N = out.length;
+  const lastIdx = N - 1;
+  for (let b = 0; b < N; b++) {
+    const t = b / lastIdx; // 0..1 mel-bin fraction
+    // Brightness-controlled tilt: 0 → low-shelf, 1 → high-shelf. gamma=1.2 keeps
+    // the shape from going too spiky at the endpoints.
+    const lowShape  = Math.pow(1 - t, 1.2);
+    const highShape = Math.pow(t, 1.2);
+    const tilt  = (1 - brightness) * lowShape + brightness * highShape;
+    // Flatness blends tilted shape with a uniform mid-level so high-flatness
+    // segments (noise, pads) fill the whole bar instead of hugging one end.
+    const shape = flatness * 0.45 + (1 - flatness) * tilt;
+    // Bass bump on beat — concentrated in the low bins, decays exponentially
+    // toward treble. Same shape a kick drum presents in a real FFT.
+    const bassBump = beatPulse * Math.exp(-t * 6.0) * 0.55;
+    const v = loud * (0.20 + shape * 1.35) + bassBump;
+    out[b] = v > 0 ? v : 0;
+  }
+  return true;
 }
 
-window.SpotifyAnalysis = { loadForTrack, synthesize };
+window.SpotifyAnalysis = { loadForTrack, hasTrack, fillMagnitudes };
