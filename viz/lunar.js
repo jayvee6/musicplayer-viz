@@ -218,16 +218,21 @@
       sdf += craterBowl(p, normalize(vec3(-0.10,  0.83,  0.55)) * R, 0.14);
       sdf += craterBowl(p, normalize(vec3( 0.40, -0.55, -0.74)) * R, 0.19);
       sdf += craterBowl(p, normalize(vec3(-0.70,  0.25, -0.67)) * R, 0.13);
-      sdf += (lfbm(p * 4.0) - 0.5) * 0.025;
+      // Note: removed the per-step lfbm silhouette-roughness term that the
+      // iOS version carried. It ran 5 Perlin noises inside every one of
+      // 80 raymarch steps plus 6 gradient samples — ~34K ops/pixel —
+      // purely to roughen the silhouette. The LDEM bump already provides
+      // all visible relief, so the SDF can stay analytic.
       return sdf;
     }
 
+    // Analytic sphere normal — crater bowls are shallow enough (~0.08*r
+    // depth) that their contribution to the normal is negligible for
+    // lighting, and the LDEM bump in bumpGrad provides all the visible
+    // surface relief. Replaces 6 moonSDF gradient samples with a single
+    // normalize — saves ~50 craterBowl calls per hit pixel.
     vec3 moonNormal(vec3 p, float bass) {
-      vec2 e = vec2(0.0015, 0.0);
-      return normalize(vec3(
-        moonSDF(p + e.xyy, bass) - moonSDF(p - e.xyy, bass),
-        moonSDF(p + e.yxy, bass) - moonSDF(p - e.yxy, bass),
-        moonSDF(p + e.yyx, bass) - moonSDF(p - e.yyx, bass)));
+      return normalize(p);
     }
 
     // ── Rotations ─────────────────────────────────────────────────────
@@ -306,13 +311,17 @@
         bool  hit    = false;
         vec3  hitLocal = vec3(0.0);
 
-        for (int i = 0; i < 80; i++) {
+        // Sphere-tracing on an analytic SDF converges fast — 50 iters is
+        // plenty for an essentially-spherical surface with shallow crater
+        // perturbations. Step multiplier 0.95 (up from 0.88) since the
+        // SDF is much closer to exact once the per-step lfbm is gone.
+        for (int i = 0; i < 50; i++) {
           vec3 wp = ro + rd * t;
           vec3 lp = lrotX(lrotY(wp, -u_rotY), -tilt);
           float d = moonSDF(lp, u_bass);
           if (d < 0.001) { hit = true; hitLocal = lp; break; }
           if (t > tEnd + 0.1) break;
-          t += max(d * 0.88, 0.001);
+          t += max(d * 0.95, 0.001);
         }
 
         if (hit) {
@@ -406,13 +415,15 @@
     }
   `;
 
-  let scene    = null;
-  let mat      = null;
-  let rotY     = 0;
-  let sunPhase = 0;   // radians; CPU-accumulated sun orbit angle
-  let lastT    = 0;
-  let tex2K    = null;  // 2K LROC mosaic (~460 KB)
-  let tex4K    = null;  // 4K LROC mosaic (~3 MB)
+  let scene     = null;
+  let mat       = null;
+  let rotY      = 0;
+  let sunPhase  = 0;   // radians; CPU-accumulated sun orbit angle
+  let lastT     = 0;
+  let tex2K     = null;  // 2K LROC mosaic (~460 KB)
+  let tex4K     = null;  // 4K LROC mosaic (~3 MB)
+  let composer  = null;  // EffectComposer with retro film pass
+  let retroPass = null;  // reference for updating `time` each frame
 
   function init() {
     if (!window.vizGL && typeof window.initThree === 'function') window.initThree();
@@ -469,6 +480,18 @@
       fragmentShader: FS,
     });
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+    // Retro film pass — wraps the shared renderer in an EffectComposer
+    // whose second pass applies chromatic aberration, scanlines, grain,
+    // vignette, and teal/orange colour grading. When Lunar is active
+    // the render loop calls composer.render() instead of renderer.render()
+    // so every pixel goes through the retro filter.
+    if (typeof window.makeRetroComposer === 'function') {
+      const built = window.makeRetroComposer(
+        window.vizGL.renderer, scene, window.vizGL.camera
+      );
+      if (built) { composer = built.composer; retroPass = built.retroPass; }
+    }
   }
 
   function use4K(flag) {
@@ -525,7 +548,18 @@
     u.u_ambient.value   = 0.03;
     u.u_beatPulse.value = f.beatPulse || 0;
 
-    window.vizGL.renderer.render(scene, window.vizGL.camera);
+    const retro = window.Viz.controlValue('lunar', 'retro');
+    if (retro && composer && retroPass) {
+      // Keep the composer's internal render targets in sync with window
+      // size — cheap per-frame (Three.js no-ops when already at target size).
+      composer.setSize(window.innerWidth, window.innerHeight);
+      retroPass.uniforms.time.value = t;
+      composer.render(dt);
+    } else {
+      // Either the toggle is off or the postprocessing modules failed
+      // to load — render straight to the canvas.
+      window.vizGL.renderer.render(scene, window.vizGL.camera);
+    }
   }
 
   window.Viz.register({
@@ -534,5 +568,10 @@
     kind:     'webgl',
     initFn:   init,
     renderFn: render,
+    controls: [
+      // One knob only — flip the retro film pass (chromatic aberration,
+      // scanlines, grain, vignette, teal/orange grade) on or off.
+      { id: 'retro', label: 'Retro', type: 'toggle', default: true },
+    ],
   });
 })();
