@@ -863,7 +863,15 @@ function initThree() {
   blobMesh = new THREE.Mesh(geo, mat);
   threeScene.add(blobMesh);
   threeReady = true;
+
+  // Shared renderer + camera — each viz can build its own scene + mesh on top.
+  // A1 (Kaleidoscope) onwards uses this to avoid a per-viz WebGLRenderer.
+  window.vizGL = { renderer: threeRenderer, camera: threeCamera };
 }
+
+// Expose initThree so a non-Blob WebGL viz (Kaleidoscope, CosmicWave, Lunar)
+// can force WebGL setup if it's the first webgl-kind mode ever activated.
+window.initThree = initThree;
 
 function renderBlob(t) {
   if (!threeReady) return;
