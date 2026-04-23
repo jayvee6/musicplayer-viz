@@ -1110,3 +1110,121 @@ body.hidden .viz-cycle-btn { display: none; }
   min-width: 36px;
   text-align: right;
 }
+
+/* ─── Accessibility: focus indicators ───────────────────────────────────── */
+/* Visible focus ring for every interactive element that becomes keyboard-
+   focused. :focus-visible avoids the ring on mouse clicks; it only activates
+   for keyboard / programmatic focus so the UI stays clean for pointer users. */
+
+:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+/* Mode-button dots are tiny — use a larger, rounded outline ring so it's
+   visible against any viz background. */
+.mode-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 3px;
+  border-radius: 50%;
+}
+
+/* Transport and utility buttons: subtle glow to stand out against dark canvas */
+.transport-btn:focus-visible,
+.ui-btn:focus-visible,
+.viz-cycle-btn:focus-visible,
+.stream-src-btn:focus-visible,
+.viz-source-btn:focus-visible,
+#playlist-btn:focus-visible,
+#ipod-toggle:focus-visible,
+#signin-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Viz-controls inputs */
+.viz-controls input:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 1px;
+}
+
+/* ─── Accessibility: prefers-reduced-motion ──────────────────────────────── */
+/* When the user has "Reduce Motion" enabled in their OS, suppress transitions
+   and animations that could be distracting. Viz rendering itself runs via
+   requestAnimationFrame and is not affected by CSS — those would need JS
+   guards. This covers all CSS-driven motion in the shell/UI. */
+@media (prefers-reduced-motion: reduce) {
+  /* Kill all CSS transitions in the controls shell */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration:  0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* Title overlay fade (normally 1.1 s) — show briefly then hide instantly */
+  #viz-title-overlay {
+    transition: none !important;
+  }
+
+  /* iPod overlay slide-in */
+  .ipod {
+    transition: none !important;
+  }
+
+  /* Track-name ticker scroll animation */
+  #track-name.ticker {
+    animation: none !important;
+  }
+}
+
+/* ─── Responsive: narrow viewport (≤ 640px) ─────────────────────────────── */
+/* At 600 px the controls pill's min-width: 580px would clip off-screen.
+   Drop the min-width, allow the pill to shrink, and wrap the bottom row. */
+@media (max-width: 640px) {
+  #controls {
+    min-width: 0;
+    width: calc(100vw - 24px);
+    left: 12px !important;  /* override the JS-positioned left; keep centered */
+    padding: 10px 12px;
+  }
+
+  /* Music row: stack track-details + transport + actions vertically */
+  #music-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Transport: center the buttons and let them wrap */
+  #transport {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Track details: full width */
+  #track-details {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  /* Music actions: full width, right-align */
+  #music-actions {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  /* Bottom row: stack sliders above mode dots */
+  #bottom-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #sliders-row {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+}
