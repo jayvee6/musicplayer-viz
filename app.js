@@ -2028,6 +2028,15 @@ function onRemoteTrackChange(source, track) {
     album:   track.album && track.album.name,
     albumArt,
   });
+  // Kick off a Spotify audio-features fetch for mood-aware viz. Apple
+  // Music tracks fall through to neutral defaults — MusicKit JS doesn't
+  // expose ISRC in the browser, so we can't bridge to Spotify's dataset.
+  if (window.TrackMeta && track.id) {
+    const providerId = source === window.SpotifySource ? 'spotify'
+                     : source === window.AppleSource   ? 'apple'
+                     : null;
+    if (providerId) window.TrackMeta.set({ source: providerId, id: track.id });
+  }
 }
 if (window.SpotifySource && window.SpotifySource.onTrackChange) {
   window.SpotifySource.onTrackChange(t => onRemoteTrackChange(window.SpotifySource, t));
