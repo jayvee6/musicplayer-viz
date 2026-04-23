@@ -1036,3 +1036,28 @@ body.hidden .viz-cycle-btn { display: none; }
 #viz-ctl-fireworks .speed-label input[type="range"] {
   width: 72px;
 }
+
+/* Number-type viz control — tighter than text; match the glass look. */
+.viz-controls input[type="number"] {
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 12px;
+  font-family: -apple-system, ui-monospace, SFMono-Regular, monospace;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+}
+
+.viz-controls input[type="number"]:focus {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Breathing room between adjacent controls in a viz row so labels, values,
+   and toggles don't visually collide. */
+.viz-controls {
+  gap: 18px;
+}

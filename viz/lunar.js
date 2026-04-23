@@ -1,0 +1,493 @@
+// Lunar — raymarched cratered moon with a slow orbiting sun, multi-scale
+// bump mapping, and a starfield + nebula background. Port of
+// Packages/Core/Sources/Core/Rendering/Shaders/Lunar.metal from the iOS
+// StudioJoeMusic app.
+//
+// Built up in steps:
+//   Step 1 (this commit): scaffold — JS plumbing, uniforms, CPU rotY
+//                        accumulator, register() call, placeholder shader
+//                        that renders a simple disc so the mode button
+//                        confirms the viz is wired before we drop in the
+//                        200-line raymarch.
+//   Step 2: hash / value-noise / 5-octave FBM helpers.
+//   Step 3: bumpHeight + bumpGrad + microCraterDarken.
+//   Step 4: craterBowl + moonSDF + moonNormal + raymarch + lighting + main.
+//
+// Depends on:
+//   window.Viz         (B1) — registry
+//   window.AudioEngine      — frame.bass, frame.treble, frame.valence, frame.energy
+//   window.vizGL            — shared Three.js renderer + ortho camera
+//   THREE global            — CDN
+
+(() => {
+  if (typeof THREE === 'undefined' || !window.Viz) return;
+
+  const VS = `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position, 1.0);
+    }
+  `;
+
+  // Ported 1:1 from Lunar.metal. Metal → GLSL: float3 → vec3, saturate →
+  // clamp(0,1), static → plain fn, atan2 → atan. 80-iteration raymarch,
+  // analytic moon SDF with 8 named crater bowls, multi-scale FBM bump.
+  const FS = `
+    precision highp float;
+
+    varying vec2 vUv;
+
+    uniform float     u_time;
+    uniform float     u_rotY;
+    uniform float     u_bass;
+    uniform float     u_treble;
+    uniform vec2      u_resolution;
+    uniform float     u_valence;
+    uniform float     u_energy;
+    uniform sampler2D u_moonTex;
+    uniform float     u_texLoaded;   // 1.0 once the image is in — gate the sample
+    uniform float     u_bumpAmt;     // user slider; scales the tangent bump
+
+    // ── Classic Perlin 3D (Gustavson / Ashima) ────────────────────────
+    // Gradient noise — smoother and more organic than value noise, no
+    // lumpy bubble artifacts. Returns [-1, 1]; we normalize to [0, 1]
+    // at call sites that expect positive values.
+    vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec3 mod289v3(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 permute(vec4 x) { return mod289((x * 34.0 + 1.0) * x); }
+    vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+    vec3 fade(vec3 t) { return t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
+
+    float cnoise(vec3 P) {
+      vec3 Pi0 = floor(P);
+      vec3 Pi1 = Pi0 + vec3(1.0);
+      Pi0 = mod289v3(Pi0);
+      Pi1 = mod289v3(Pi1);
+      vec3 Pf0 = fract(P);
+      vec3 Pf1 = Pf0 - vec3(1.0);
+      vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);
+      vec4 iy = vec4(Pi0.yy, Pi1.yy);
+      vec4 iz0 = vec4(Pi0.z);
+      vec4 iz1 = vec4(Pi1.z);
+      vec4 ixy  = permute(permute(ix) + iy);
+      vec4 ixy0 = permute(ixy + iz0);
+      vec4 ixy1 = permute(ixy + iz1);
+      vec4 gx0 = ixy0 * (1.0 / 7.0);
+      vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;
+      gx0 = fract(gx0);
+      vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);
+      vec4 sz0 = step(gz0, vec4(0.0));
+      gx0 -= sz0 * (step(0.0, gx0) - 0.5);
+      gy0 -= sz0 * (step(0.0, gy0) - 0.5);
+      vec4 gx1 = ixy1 * (1.0 / 7.0);
+      vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;
+      gx1 = fract(gx1);
+      vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);
+      vec4 sz1 = step(gz1, vec4(0.0));
+      gx1 -= sz1 * (step(0.0, gx1) - 0.5);
+      gy1 -= sz1 * (step(0.0, gy1) - 0.5);
+      vec3 g000 = vec3(gx0.x, gy0.x, gz0.x);
+      vec3 g100 = vec3(gx0.y, gy0.y, gz0.y);
+      vec3 g010 = vec3(gx0.z, gy0.z, gz0.z);
+      vec3 g110 = vec3(gx0.w, gy0.w, gz0.w);
+      vec3 g001 = vec3(gx1.x, gy1.x, gz1.x);
+      vec3 g101 = vec3(gx1.y, gy1.y, gz1.y);
+      vec3 g011 = vec3(gx1.z, gy1.z, gz1.z);
+      vec3 g111 = vec3(gx1.w, gy1.w, gz1.w);
+      vec4 norm0 = taylorInvSqrt(vec4(dot(g000, g000), dot(g010, g010),
+                                      dot(g100, g100), dot(g110, g110)));
+      g000 *= norm0.x; g010 *= norm0.y; g100 *= norm0.z; g110 *= norm0.w;
+      vec4 norm1 = taylorInvSqrt(vec4(dot(g001, g001), dot(g011, g011),
+                                      dot(g101, g101), dot(g111, g111)));
+      g001 *= norm1.x; g011 *= norm1.y; g101 *= norm1.z; g111 *= norm1.w;
+      float n000 = dot(g000, Pf0);
+      float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));
+      float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));
+      float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));
+      float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));
+      float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));
+      float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));
+      float n111 = dot(g111, Pf1);
+      vec3 fade_xyz = fade(Pf0);
+      vec4 n_z = mix(vec4(n000, n100, n010, n110),
+                     vec4(n001, n101, n011, n111), fade_xyz.z);
+      vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);
+      float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);
+      return 2.2 * n_xyz;
+    }
+
+    // Remap Perlin output from [-1,1] into [0,1] for call sites that expect
+    // a non-negative noise value (matches the old ln3 interface).
+    float ln3(vec3 p) { return cnoise(p) * 0.5 + 0.5; }
+
+    // Keep the old micro-crater hash — the lh1 function is a simple PRNG
+    // used for independent cell-by-cell decisions and doesn't need gradient
+    // noise properties.
+    float lh1(vec3 p) {
+      p = fract(p * 0.3183099 + 0.1);
+      p *= 17.0;
+      return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+
+    float lfbm(vec3 p) {
+      float v = 0.0, a = 0.5;
+      for (int i = 0; i < 5; i++) {
+        v += a * ln3(p);
+        p = p * 2.01 + vec3(1.7, 9.2, 3.3);
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    // ── Bump map (shading only — never fed into SDF) ──────────────────
+    // Pure LROC luminance — no procedural noise. The texture itself
+    // encodes the relief that matches what the colour channels show,
+    // so any extra noise just fights with it. Before the image loads
+    // the sampler returns near-zero and the bump is ~flat; acceptable
+    // for the brief pre-paint window.
+    float bumpHeight(vec3 p) {
+      vec3 nPos = normalize(p);
+      vec2 uv = vec2(
+        atan(nPos.z, nPos.x) / (2.0 * 3.14159265) + 0.5,
+        asin(clamp(nPos.y, -1.0, 1.0)) / 3.14159265 + 0.5
+      );
+      return dot(texture2D(u_moonTex, uv).rgb, vec3(0.299, 0.587, 0.114));
+    }
+
+    vec3 bumpGrad(vec3 p) {
+      float e = 0.0025;
+      vec2 k = vec2(e, 0.0);
+      float inv2e = 1.0 / (2.0 * e);
+      return vec3(
+        bumpHeight(p + k.xyy) - bumpHeight(p - k.xyy),
+        bumpHeight(p + k.yxy) - bumpHeight(p - k.yxy),
+        bumpHeight(p + k.yyx) - bumpHeight(p - k.yyx)) * inv2e;
+    }
+
+    // Micro-crater albedo darkening — 27-cell neighborhood hash sample.
+    float microCraterDarken(vec3 p, float cellScale) {
+      vec3 pS   = p * cellScale;
+      vec3 cell = floor(pS);
+      vec3 frac = fract(pS);
+      float dark = 0.0;
+      for (int dz = -1; dz <= 1; dz++) {
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            vec3 offset = vec3(float(dx), float(dy), float(dz));
+            vec3 ncell  = cell + offset;
+            float r1    = lh1(ncell);
+            if (r1 < 0.70) continue;
+            float r2    = lh1(ncell + 77.3);
+            vec3 center = offset + vec3(r2, fract(r1 * 43.0), fract(r2 * 91.0)) * 0.7 + 0.15;
+            float cR    = 0.12 + r2 * 0.25;
+            float d     = length(frac - center) / cR;
+            if (d >= 1.0) continue;
+            float bowl = 1.0 - d * d;
+            dark += bowl * (0.15 + r2 * 0.20);
+          }
+        }
+      }
+      return dark;
+    }
+
+    // ── Moon SDF ──────────────────────────────────────────────────────
+    float craterBowl(vec3 p, vec3 c, float r) {
+      float d = clamp(length(p - c) / r, 0.0, 1.0);
+      float w = 1.0 - d * d;
+      return -w * w * r * 0.08;
+    }
+
+    float moonSDF(vec3 p, float bass) {
+      float R = 0.65 + bass * 0.04;
+      float sdf = length(p) - R;
+      sdf += craterBowl(p, normalize(vec3( 0.30,  0.55,  0.78)) * R, 0.22);
+      sdf += craterBowl(p, normalize(vec3(-0.55,  0.20,  0.81)) * R, 0.15);
+      sdf += craterBowl(p, normalize(vec3( 0.12, -0.60,  0.79)) * R, 0.17);
+      sdf += craterBowl(p, normalize(vec3( 0.82,  0.10,  0.56)) * R, 0.12);
+      sdf += craterBowl(p, normalize(vec3(-0.40, -0.30,  0.86)) * R, 0.11);
+      sdf += craterBowl(p, normalize(vec3(-0.10,  0.83,  0.55)) * R, 0.14);
+      sdf += craterBowl(p, normalize(vec3( 0.40, -0.55, -0.74)) * R, 0.19);
+      sdf += craterBowl(p, normalize(vec3(-0.70,  0.25, -0.67)) * R, 0.13);
+      sdf += (lfbm(p * 4.0) - 0.5) * 0.025;
+      return sdf;
+    }
+
+    vec3 moonNormal(vec3 p, float bass) {
+      vec2 e = vec2(0.0015, 0.0);
+      return normalize(vec3(
+        moonSDF(p + e.xyy, bass) - moonSDF(p - e.xyy, bass),
+        moonSDF(p + e.yxy, bass) - moonSDF(p - e.yxy, bass),
+        moonSDF(p + e.yyx, bass) - moonSDF(p - e.yyx, bass)));
+    }
+
+    // ── Rotations ─────────────────────────────────────────────────────
+    vec3 lrotY(vec3 p, float a) {
+      float c = cos(a), s = sin(a);
+      return vec3(c*p.x + s*p.z, p.y, -s*p.x + c*p.z);
+    }
+    vec3 lrotX(vec3 p, float a) {
+      float c = cos(a), s = sin(a);
+      return vec3(p.x, c*p.y - s*p.z, s*p.y + c*p.z);
+    }
+
+    // ── Starfield ─────────────────────────────────────────────────────
+    // Render each hashed star as a soft disc using the sub-cell fractional
+    // offset from cell centre — otherwise floor() on the cell grid shows
+    // every star as a hard square pixel.
+    float starField(vec3 dir, float time, float treble) {
+      vec3 d = normalize(dir);
+      float s = 0.0;
+      {
+        vec3 cell = floor(d * 100.0);
+        float r = lh1(cell);
+        if (r > 0.989) {
+          vec2 sub = fract(d.xy * 100.0) - 0.5;
+          float dd = length(sub);
+          float star = smoothstep(0.30, 0.0, dd);
+          float twinkle = 0.7 + 0.3 * sin(time * 4.0 + r * 43.0 + treble * 10.0);
+          s += star * twinkle;
+        }
+      }
+      {
+        vec3 cell = floor(d * 160.0);
+        float r = lh1(cell + vec3(7.3, 2.1, 9.8));
+        if (r > 0.996) {
+          vec2 sub = fract(d.xy * 160.0) - 0.5;
+          float dd = length(sub);
+          float star = smoothstep(0.28, 0.0, dd);
+          s += star * 0.45;
+        }
+      }
+      return min(s, 1.0);
+    }
+
+    // ── Main ──────────────────────────────────────────────────────────
+    void main() {
+      float asp = u_resolution.x / u_resolution.y;
+      vec2 uv = (vUv - 0.5) * vec2(asp, 1.0);
+
+      vec3 ro = vec3(0.0, 0.0, 2.5);
+      vec3 rd = normalize(vec3(uv, -1.4));
+
+      float tilt   = 0.18;
+      float boundR = 0.75;
+
+      float b2   = dot(ro, rd);
+      float disc = b2 * b2 - (dot(ro, ro) - boundR * boundR);
+
+      vec3 col = vec3(0.0);
+      bool showBg = false;
+
+      if (disc < 0.0) {
+        showBg = true;
+      } else {
+        float tStart = max(0.001, -b2 - sqrt(disc) - 0.05);
+        float tEnd   = -b2 + sqrt(disc) + 0.05;
+        float t      = tStart;
+        bool  hit    = false;
+        vec3  hitLocal = vec3(0.0);
+
+        for (int i = 0; i < 80; i++) {
+          vec3 wp = ro + rd * t;
+          vec3 lp = lrotX(lrotY(wp, -u_rotY), -tilt);
+          float d = moonSDF(lp, u_bass);
+          if (d < 0.001) { hit = true; hitLocal = lp; break; }
+          if (t > tEnd + 0.1) break;
+          t += max(d * 0.88, 0.001);
+        }
+
+        if (hit) {
+          vec3 nGeom = moonNormal(hitLocal, u_bass);
+
+          // Tangent-plane bump perturbation (doesn't rotate silhouette).
+          // Weight driven by the user's Bump slider.
+          vec3 bg       = bumpGrad(hitLocal);
+          vec3 tangGrad = bg - dot(bg, nGeom) * nGeom;
+          vec3 n = normalize(nGeom - tangGrad * u_bumpAmt);
+
+          float microDark = microCraterDarken(hitLocal, 26.0);
+
+          // Real LROC lunar texture — carries the full albedo (maria /
+          // highland variation, crater bright rays, subtle colour drift).
+          // No extra tint on top — the texture is already colour-graded.
+          vec3 nPos = normalize(hitLocal);
+          vec2 texUV = vec2(
+            atan(nPos.z, nPos.x) / (2.0 * 3.14159265) + 0.5,
+            asin(clamp(nPos.y, -1.0, 1.0)) / 3.14159265 + 0.5
+          );
+          vec3 lroc = texture2D(u_moonTex, texUV).rgb;
+
+          // Procedural greyscale fallback — shown only while u_texLoaded=0.
+          float mariaV = lfbm(hitLocal * 1.9 + 3.1);
+          float mariaM = smoothstep(0.38, 0.62, mariaV);
+          vec3 fallback = vec3(mix(0.22, 0.82, mariaM));
+
+          vec3 surf = mix(fallback, lroc, u_texLoaded);
+          surf *= (1.0 - microDark * 0.18);
+
+          // Orbiting sun — lives in world space, rotated into local space
+          // for dot products with the local surface normal.
+          float sunOrbit = u_time * 0.08;
+          float sunElev  = 0.32 + 0.14 * sin(u_time * 0.035);
+          float ce       = cos(sunElev);
+          vec3 sunWorld  = vec3(cos(sunOrbit) * ce,
+                                sin(sunElev),
+                                sin(sunOrbit) * ce) * 6.0;
+          vec3 sunLocal  = lrotX(lrotY(sunWorld, -u_rotY), -tilt);
+
+          vec3 toSun = sunLocal - hitLocal;
+          float sunDist = length(toSun);
+          vec3 L = toSun / sunDist;
+          float sunAtten = clamp(36.0 / (sunDist * sunDist), 0.75, 1.15);
+
+          float NdL = max(0.0, dot(n, L));
+          float lit = smoothstep(0.0, 0.14, NdL) * NdL;
+
+          vec3 sunColor = vec3(1.00, 0.96, 0.88);
+          vec3 skyFill  = vec3(0.32, 0.40, 0.55);
+
+          col  = surf * sunColor * lit * sunAtten;
+          col += surf * skyFill * 0.035 * max(0.25, 0.5 + 0.5 * nGeom.y);
+          col += surf * 0.015;
+          col *= (1.0 + u_energy * 0.20);
+
+          // Limb darkening — softened so the edge isn't overly shadowed
+          // once the real texture supplies its own limb-tone variation.
+          vec3 V = normalize(lrotX(lrotY(-rd, -u_rotY), -tilt));
+          float NdV = max(0.0, dot(nGeom, V));
+          col *= (0.65 + 0.35 * NdV);
+        } else {
+          showBg = true;
+        }
+      }
+
+      if (showBg) {
+        float s = starField(rd, u_time, u_treble);
+        col = vec3(s) * vec3(0.92, 0.95, 1.0);
+        float neb = lfbm(vec3(rd.xy * 0.9 + vec2(u_time * 0.012, 0.3), 0.5));
+        vec3 nc = mix(vec3(0.0, 0.01, 0.04), vec3(0.02, 0.0, 0.05), u_valence);
+        col += nc * neb * 0.35;
+      }
+
+      gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
+    }
+  `;
+
+  let scene = null;
+  let mat   = null;
+  let rotY  = 0;
+  let lastT = 0;
+  let tex2K = null;   // 2K LROC mosaic (~460 KB)
+  let tex4K = null;   // 4K LROC mosaic (~3 MB)
+
+  function init() {
+    if (!window.vizGL && typeof window.initThree === 'function') window.initThree();
+    const gl = window.vizGL;
+    if (!gl) { console.warn('[lunar] window.vizGL not ready'); return; }
+
+    scene = new THREE.Scene();
+
+    // LROC (Lunar Reconnaissance Orbiter Camera) colour mosaic.
+    // Equirectangular — standard spherical projection so the shader can
+    // UV via atan(z,x) + asin(y) straight off the hit point. Two res
+    // variants shipped so the user can A/B detail vs. download cost:
+    // 2K (460 KB) default, 4K (3 MB) on demand via the toggle.
+    const loader = new THREE.TextureLoader();
+    const prepTex = (t) => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      return t;
+    };
+    tex2K = prepTex(loader.load('textures/lroc_color_2k.jpg', () => {
+      if (mat) mat.uniforms.u_texLoaded.value = 1.0;
+    }));
+    // 4K lazy-loaded — only fetched once the user flips the toggle so
+    // the 2K variant isn't held up waiting on the larger download.
+    tex4K = null;
+
+    mat = new THREE.ShaderMaterial({
+      uniforms: {
+        u_time:       { value: 0 },
+        u_rotY:       { value: 0 },
+        u_bass:       { value: 0 },
+        u_treble:     { value: 0 },
+        u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+        u_valence:    { value: 0.5 },
+        u_energy:     { value: 0.5 },
+        u_moonTex:    { value: tex2K },
+        u_texLoaded:  { value: 0.0 },
+        u_bumpAmt:    { value: 0.12 },
+      },
+      vertexShader:   VS,
+      fragmentShader: FS,
+    });
+    scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+  }
+
+  function use4K(flag) {
+    if (!mat) return;
+    if (flag) {
+      if (!tex4K) {
+        const loader = new THREE.TextureLoader();
+        tex4K = loader.load('textures/lroc_color_4k.jpg', () => {
+          if (mat && window.Viz.controlValue('lunar', 'hires')) {
+            mat.uniforms.u_moonTex.value = tex4K;
+          }
+        });
+        tex4K.wrapS = tex4K.wrapT = THREE.RepeatWrapping;
+        tex4K.minFilter = THREE.LinearMipmapLinearFilter;
+        tex4K.magFilter = THREE.LinearFilter;
+      } else {
+        mat.uniforms.u_moonTex.value = tex4K;
+      }
+    } else {
+      mat.uniforms.u_moonTex.value = tex2K;
+    }
+  }
+
+  function render(t, frame) {
+    if (!scene) init();
+    if (!scene) return;
+
+    const dt = lastT === 0 ? (1 / 60) : Math.min(0.1, Math.max(0.001, t - lastT));
+    lastT = t;
+
+    const f = frame || {};
+    // Slow Y-rotation of the moon; bass nudges the rate slightly so beats
+    // feel like they kick the spin forward.
+    rotY += dt * (0.08 + (f.bass || 0) * 0.30);
+
+    const u = mat.uniforms;
+    u.u_time.value = t;
+    u.u_rotY.value = rotY;
+    u.u_bass.value   = f.bass   || 0;
+    u.u_treble.value = f.treble || 0;
+    u.u_resolution.value.set(window.innerWidth, window.innerHeight);
+    u.u_valence.value = f.valence ?? 0.5;
+    u.u_energy.value  = f.energy  ?? 0.5;
+    u.u_bumpAmt.value = window.Viz.controlValue('lunar', 'bump');
+
+    // Swap the texture reference when the hires toggle flips. Cheap —
+    // the sampler just switches which texture it reads from.
+    const wantsHires = !!window.Viz.controlValue('lunar', 'hires');
+    const currentIs4K = tex4K && u.u_moonTex.value === tex4K;
+    if (wantsHires !== currentIs4K) use4K(wantsHires);
+
+    window.vizGL.renderer.render(scene, window.vizGL.camera);
+  }
+
+  window.Viz.register({
+    id:       'lunar',
+    label:    'Lunar',
+    kind:     'webgl',
+    initFn:   init,
+    renderFn: render,
+    controls: [
+      // Bump as a typed number — 0..1 range, 0.01 step. Sweet spot 0.05..0.25.
+      { id: 'bump',  label: 'Bump', type: 'number', min: 0, max: 1, step: 0.01, default: 0.12, width: '64px' },
+      { id: 'hires', label: '4K',   type: 'toggle', default: false },
+    ],
+  });
+})();

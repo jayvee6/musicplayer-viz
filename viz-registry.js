@@ -41,8 +41,9 @@
   }
 
   // Builds a <div class="viz-controls"> for any viz that declares `controls`.
-  // Four control types are supported (type defaults to 'slider' for back-compat):
+  // Five control types are supported (type defaults to 'slider' for back-compat):
   //   - 'slider': <input type="range">     — min, max, step, default (numeric)
+  //   - 'number': <input type="number">    — typed-in value with min, max, step
   //   - 'text':   <input type="text">      — default (string), optional width
   //   - 'button': <button>                  — onClick callback
   //   - 'toggle': <input type="checkbox">  — default (bool), returns boolean
@@ -82,6 +83,13 @@
         input.value = String(c.default ?? '');
         if (c.width) input.style.width = c.width;
         if (c.placeholder) input.placeholder = c.placeholder;
+      } else if (type === 'number') {
+        input.type = 'number';
+        input.min  = String(c.min);
+        input.max  = String(c.max);
+        input.step = String(c.step ?? 0.01);
+        input.value = String(c.default ?? c.min);
+        if (c.width) input.style.width = c.width;
       } else if (type === 'toggle') {
         input.type = 'checkbox';
         input.checked = !!c.default;
@@ -93,6 +101,16 @@
         input.value = String(c.default ?? c.min);
       }
       label.appendChild(input);
+      // Optional live value readout — useful for dialing in numeric
+      // settings. Renders as a small monospaced span next to the input
+      // and updates on every drag.
+      if (c.showValue && (type === 'slider' || type === 'text')) {
+        const readout = document.createElement('span');
+        readout.className = 'viz-ctl-readout';
+        readout.textContent = input.value;
+        input.addEventListener('input', () => { readout.textContent = input.value; });
+        label.appendChild(readout);
+      }
       div.appendChild(label);
     });
   }
@@ -115,7 +133,11 @@
     if (type === 'text') {
       return input ? input.value : (ctl ? (ctl.default ?? '') : '');
     }
-    if (input) return parseFloat(input.value);
+    // slider + number: parse numeric value, fall back to declared default.
+    if (input) {
+      const v = parseFloat(input.value);
+      return isNaN(v) ? (ctl ? (ctl.default ?? 0) : 0) : v;
+    }
     return ctl ? (ctl.default ?? ctl.min) : 0;
   }
 
