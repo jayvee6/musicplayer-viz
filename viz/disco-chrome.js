@@ -19,58 +19,6 @@
     return;
   }
 
-  // Deterministic PRNG for seeded canvas-face generation.
-  function mulberry32(seed) {
-    let a = seed >>> 0;
-    return () => {
-      a = (a + 0x6D2B79F5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  // Exact copy of the prototype's env-face generator.
-  function makeEnvFace(seed) {
-    const size = 512;
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = size;
-    const ctx = cv.getContext('2d');
-
-    const bg = ctx.createLinearGradient(0, 0, 0, size);
-    bg.addColorStop(0.0, '#04060f');
-    bg.addColorStop(1.0, '#000000');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, size, size);
-
-    const rng = mulberry32(seed * 9301 + 49297);
-    for (let i = 0; i < 14; i++) {
-      const x = rng() * size;
-      const y = rng() * size;
-      const r = 14 + rng() * 32;
-      const hue = Math.floor(rng() * 360);
-      const alpha = 0.85 + rng() * 0.15;
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const grd = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
-      grd.addColorStop(0.0, `hsla(${hue}, 100%, 85%, ${alpha})`);
-      grd.addColorStop(0.3, `hsla(${hue}, 100%, 60%, ${alpha * 0.5})`);
-      grd.addColorStop(1.0, `hsla(${hue}, 100%, 50%, 0)`);
-      ctx.fillStyle = grd;
-      ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
-
-      const core = ctx.createRadialGradient(x, y, 0, x, y, r * 0.6);
-      core.addColorStop(0.0, `hsla(${hue}, 60%, 98%, 1.0)`);
-      core.addColorStop(1.0, `hsla(${hue}, 100%, 70%, 0)`);
-      ctx.fillStyle = core;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-      ctx.restore();
-    }
-    return cv;
-  }
-
   let scene     = null;
   let camera    = null;
   let ball      = null;
@@ -79,6 +27,9 @@
   let sky       = null;    // nebula skybox mesh (inside-out sphere at r=250)
   let skyMat    = null;    // ShaderMaterial for sky — u_time feeds fbm phase
   let stars     = null;    // 3500-star BufferGeometry Points field (Phase 2)
+  let cubeRT    = null;    // WebGLCubeRenderTarget for live reflections (Phase 3)
+  let cubeCam   = null;    // CubeCamera that renders the scene into cubeRT
+  let frameCounter = 0;    // throttles cubeCam.update() via the Refresh control
   let composer  = null;
   let bloomPass = null;
   let lastT     = 0;
@@ -240,30 +191,39 @@
     }));
     scene.add(stars);
 
-    // Procedural cube env — 6 seeded faces, same as prototype. Mark the
-    // texture as sRGB so colour values in the canvas match what the
-    // material picks up after tone mapping.
+    // CubeCamera for live reflections — verbatim port from
+    //   /StudioJoeMusic/.claude/skills/studiojoe-viz/showcase/chrome-orb.html:174-184
     //
-    // NOTE: this still drives MATERIAL reflections (scene.environment).
-    // Phase 3 of the realign replaces this with CubeCamera for live
-    // reflections off the nebula. For Phase 1 the nebula is only the
-    // visible backdrop; the orb still reflects the baked faces.
-    const envFaces = [1, 2, 3, 4, 5, 6].map(makeEnvFace);
-    const envTex = new THREE.CubeTexture(envFaces);
-    envTex.encoding = THREE.sRGBEncoding;
-    envTex.needsUpdate = true;
-    scene.environment = envTex;
+    // 512² cube render target with mipmaps + sRGB so the nebula and
+    // starfield register crisply in tile reflections. The orb reads as a
+    // true mirror in space — not a shiny ball with a baked texture.
+    //
+    // Replaces the Phase 1/2-era baked canvas env map. Refresh rate is
+    // user-tunable via the Refresh control (1..4 frames); default 1 =
+    // every frame. Bump to 2-4 on mobile if GPU becomes the bottleneck.
+    //
+    // Phase 3 of chrome-orb realign (Packet F).
+    cubeRT = new THREE.WebGLCubeRenderTarget(512, {
+      format:          THREE.RGBAFormat,
+      generateMipmaps: true,
+      minFilter:       THREE.LinearMipmapLinearFilter,
+      encoding:        THREE.sRGBEncoding,
+    });
+    cubeCam = new THREE.CubeCamera(0.1, 300, cubeRT);
+    cubeCam.position.set(0, 0, 0);   // orb sits at origin
+    scene.add(cubeCam);
 
-    // Geometry + material — prototype exactly. IcosahedronGeometry(15, 3)
-    // has 1280 flat triangles = faceted disco ball. MeshStandardMaterial
-    // with metalness=1 and flatShading=true is the recipe.
+    // Geometry + material — orb is 1280-tri faceted MeshStandardMaterial.
+    // envMap is the live cubeRT texture (Phase 3); intensity 1.15 matches
+    // showcase tuning (was 1.2 with the baked env).
     const geo = new THREE.IcosahedronGeometry(15, 3);
     const mat = new THREE.MeshStandardMaterial({
       color:           0xffffff,
       metalness:       1.0,
       roughness:       0.1,
       flatShading:     true,
-      envMapIntensity: 1.2,
+      envMap:          cubeRT.texture,
+      envMapIntensity: 1.15,
     });
     ball = new THREE.Mesh(geo, mat);
     scene.add(ball);
@@ -285,6 +245,14 @@
     );
     bloomPass.renderToScreen = true;
     composer.addPass(bloomPass);
+
+    // Initial cube refresh — populates cubeRT before the first composer
+    // render so the orb doesn't flash black on frame 1. Ball is hidden
+    // during capture so it doesn't self-reflect.
+    ball.visible = false;
+    cubeCam.update(renderer, scene);
+    ball.visible = true;
+    frameCounter = 0;
   }
 
   function teardown() {
@@ -307,21 +275,24 @@
       if (stars.geometry) stars.geometry.dispose();
       if (stars.material) stars.material.dispose();
     }
-    if (scene && scene.environment && typeof scene.environment.dispose === 'function') {
-      scene.environment.dispose();
-    }
+    // cubeRT holds the 6-face GPU texture + mipmaps — biggest GPU surface
+    // this viz allocates. Must dispose to avoid leaking across mode switches.
+    if (cubeRT && typeof cubeRT.dispose === 'function') cubeRT.dispose();
     if (composer && typeof composer.dispose === 'function') composer.dispose();
-    ball      = null;
-    coolLight = null;
-    warmLight = null;
-    sky       = null;
-    skyMat    = null;
-    stars     = null;
-    scene     = null;
-    composer  = null;
-    bloomPass = null;
-    startT    = null;
-    lastT     = 0;
+    ball         = null;
+    coolLight    = null;
+    warmLight    = null;
+    sky          = null;
+    skyMat       = null;
+    stars        = null;
+    cubeRT       = null;
+    cubeCam      = null;
+    scene        = null;
+    composer     = null;
+    bloomPass    = null;
+    startT       = null;
+    lastT        = 0;
+    frameCounter = 0;
   }
 
   function render(t, frame) {
@@ -383,6 +354,21 @@
     stars.rotation.y = elapsed * 0.004;
     stars.rotation.x = Math.sin(elapsed * 0.02) * 0.05;
 
+    // CubeCamera refresh (Phase 3). Hide orb so it doesn't self-reflect,
+    // fire the 6-face render, show orb again. User-controlled refresh
+    // rate: 1 = every frame (best quality), 2-4 = every Nth frame for
+    // mobile perf. Updates AFTER sky + stars advance so the capture
+    // reflects the current-frame scene state.
+    const refreshRate = Math.max(1, Math.min(4,
+      Math.floor(window.Viz.controlValue('disco-chrome', 'refresh'))
+    ));
+    frameCounter = (frameCounter + 1) >>> 0;
+    if (frameCounter % refreshRate === 0) {
+      ball.visible = false;
+      cubeCam.update(window.vizGL.renderer, scene);
+      ball.visible = true;
+    }
+
     // Aspect + composer size sync. Bloom runs at half-res (playbook:
     // postprocess at half-res, ~3-5ms saved on mobile) — must be applied
     // AFTER composer.setSize since that internally resizes every pass.
@@ -404,5 +390,10 @@
     initFn:     init,
     renderFn:   render,
     teardownFn: teardown,
+    controls: [
+      // Refresh rate for the CubeCamera cube-render. 1 = every frame
+      // (best quality); bump to 2-4 on mobile if GPU is the bottleneck.
+      { id: 'refresh', label: 'Refresh', min: 1, max: 4, step: 1, default: 1 },
+    ],
   });
 })();
