@@ -177,8 +177,20 @@
     if (!window.vizGL) return;
     const renderer = window.vizGL.renderer;
     if (prevPixelRatio !== null) renderer.setPixelRatio(prevPixelRatio);
-    // Reset startT so re-entering the viz doesn't jolt the noise phase
-    // with whatever stale elapsed time the previous session left behind.
+    // Dispose GPU resources. Both meshes share the same `geo` — calling
+    // dispose twice on the same geometry is safe (Three.js no-ops after
+    // the first). Both ShaderMaterials get disposed here too.
+    if (scene) {
+      scene.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) obj.material.dispose();
+      });
+    }
+    // Drop module-scoped refs so init() rebuilds fresh on next entry.
+    // Reset startT so re-entering doesn't jolt the noise phase with
+    // whatever stale elapsed time the previous session left behind.
+    scene = camera = wireMesh = glowMesh = sharedUni = null;
+    prevPixelRatio = null;
     startT = null;
   }
 
