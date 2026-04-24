@@ -27,6 +27,13 @@ let streamMediaSource = null;
 
 let sourceMode = null;
 
+// Local-source playback state. Set by window.LocalPlayback.play() before it
+// enters buffer-mode; consumed by play() to wire loop:false + onended so the
+// Local source's queue advances when a song finishes. null for any non-local
+// buffer playback (file drops, /music/ playlist) so that flow keeps looping.
+let _localOnEnded       = null;
+let _localCurrentTrackId = null;
+
 let bass = 0, mid = 0, treble = 0;
 const BASS_HISTORY_LEN = 16;
 // Bass history as a Float32Array ring buffer. Pre-fix: plain Array with
@@ -163,11 +170,65 @@ function setTrackDisplayName(text) {
 
 // When switching sources, stop the other path so we don't have two streams
 // feeding the analyser simultaneously.
+// Bridge used by local-source.js to push File objects through the existing
+// buffer-mode audio engine. Exposed on `window.LocalPlayback` so the
+// adapter doesn't reach into app.js internals.
+async function localPlayFile(file, meta, onEnded) {
+  if (!audioCtx) initAudio();
+  if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch {} }
+  stopOtherMode('buffer');
+
+  const arrayBuffer = await file.arrayBuffer();
+  const buf = await new Promise((resolve, reject) => {
+    audioCtx.decodeAudioData(arrayBuffer, resolve, reject);
+  });
+
+  audioBuffer = buf;
+  sourceMode  = 'buffer';
+  pauseOffset = 0;
+  _localOnEnded       = typeof onEnded === 'function' ? onEnded : null;
+  _localCurrentTrackId = (meta && meta.trackId) || null;
+
+  if (meta) updateNowPlayingUI(meta);
+  setTransportEnabled(true);
+  ipodMode = 'now';
+  syncIPodView();
+
+  // Kick off playback. play() picks up _localOnEnded and wires loop:false +
+  // onended for auto-advance.
+  play();
+  syncPlayBtn();
+}
+
+window.LocalPlayback = {
+  play: localPlayFile,
+  getCurrentTrackId: () => _localCurrentTrackId,
+  // pause/resume/seek reuse the global buffer-mode helpers. Seeking via
+  // seekBy expects a relative delta in seconds.
+  pause:    () => { if (isPlaying) togglePlayback(); },
+  resume:   () => { if (!isPlaying) togglePlayback(); },
+  seekToMs: (ms) => {
+    const target = (ms || 0) / 1000;
+    const cur    = currentPosSec();
+    seekBy(target - cur);
+  },
+  getPositionMs: () => Math.round(currentPosSec() * 1000),
+  getDurationMs: () => Math.round(trackDuration() * 1000),
+};
+
 function stopOtherMode(nextMode) {
   if (nextMode !== 'buffer' && sourceNode) {
     try { sourceNode.stop(); } catch {}
     sourceNode = null;
     audioBuffer = null;
+  }
+  // Any mode swap ends the local-source auto-advance chain so a stale
+  // callback doesn't fire against a future buffer (e.g. switching to a
+  // streaming track and then picking another track — the old onEnded
+  // would otherwise try to advance the Local queue mid-stream).
+  if (nextMode !== 'buffer') {
+    _localOnEnded        = null;
+    _localCurrentTrackId = null;
   }
   if (nextMode !== 'element' && streamAudio && !streamAudio.paused) {
     streamAudio.pause();
@@ -266,7 +327,22 @@ function play() {
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
     sourceNode.connect(analyser);
-    sourceNode.loop = true;
+    // Legacy file-drop playback loops the single loaded file forever.
+    // Local-source playback sets `_localOnEnded` so the song ends
+    // naturally and the queue advances via the stored callback.
+    sourceNode.loop = !_localOnEnded;
+    if (_localOnEnded) {
+      const cb  = _localOnEnded;
+      const buf = audioBuffer;
+      sourceNode.onended = () => {
+        // Only fire if this is still the active buffer and no other code
+        // has already handled the transition (mode switch / explicit next).
+        if (sourceMode === 'buffer' && audioBuffer === buf && _localOnEnded === cb) {
+          _localOnEnded = null;
+          cb();
+        }
+      };
+    }
     sourceNode.start(0, pauseOffset % audioBuffer.duration);
     startTime = audioCtx.currentTime - pauseOffset;
     isPlaying = true;
