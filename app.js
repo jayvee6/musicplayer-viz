@@ -1308,15 +1308,19 @@ let currentMode = 0;
 function setMode(mode) {
   currentMode = mode;
   // Delegate canvas visibility + init/teardown + active-button styling to the
-  // viz registry. Legacy control-div toggles stay here since they're tied to
-  // the legacy mode indices (Wave 2+ viz will manage their own controls via
-  // initFn/teardownFn).
+  // viz registry. Wave 2+ viz manage their own control panels via
+  // initFn/teardownFn; the Wave 1 viz below still use fixed DOM panels,
+  // which are gated here by the registry's active-id (stable) instead of
+  // the mode index (shifts every time a viz is inserted into the list —
+  // was the root of "controls attach to the wrong viz" regressions
+  // during Wave 2+ ports).
   if (window.Viz) window.Viz.setMode(mode);
 
-  const hasSpeed = mode === 4 || mode === 5;
-  document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
-  document.getElementById('waves-controls').classList.toggle('visible', mode === 1);
-  document.getElementById('fluid-controls').classList.toggle('visible', mode === 7);
+  const id = window.Viz ? window.Viz.activeId : null;
+  const hasSpeed = id === 'hypno-rings' || id === 'spiral';
+  document.getElementById('vortex-controls').classList.toggle('visible', id === 'emoji-vortex');
+  document.getElementById('waves-controls').classList.toggle('visible', id === 'emoji-waves');
+  document.getElementById('fluid-controls').classList.toggle('visible', id === 'ferro');
   document.getElementById('speed-control').style.display = hasSpeed ? 'flex' : 'none';
 }
 
