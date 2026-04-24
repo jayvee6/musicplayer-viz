@@ -1469,13 +1469,20 @@ function cycleViz(delta) {
 document.getElementById('viz-cycle-prev')?.addEventListener('click', () => cycleViz(-1));
 document.getElementById('viz-cycle-next')?.addEventListener('click', () => cycleViz(+1));
 
-// Note: keyboard shortcuts for viz cycling (ArrowLeft/Right) were briefly
-// added here during an a11y pass and then reverted. The pre-existing iPod/
-// transport keyboard handler (defined later in this file) already binds
-// ArrowLeft/Right → seekBy(±5) and Space → togglePlayback, so duplicating
-// those at the document level caused both track-seek AND viz-cycle to fire
-// on the same key press. Viz cycling stays mouse-only via the edge arrow
-// buttons + dot-row clicks; seek/play remain on the arrow keys.
+// Viz cycling via A / D keys. Intentionally NOT on ArrowLeft/Right — those
+// are reserved for track seek (±5s) by the iPod/transport keyboard handler
+// later in this file. Gamer-style A/D mirrors the edge cycle arrows (← prev,
+// → next) without colliding with transport.
+document.addEventListener('keydown', e => {
+  // Ignore modifier combos (browser shortcuts) and typing-in-input focus.
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) return;
+
+  const k = e.key.toLowerCase();
+  if (k === 'a') { e.preventDefault(); cycleViz(-1); }
+  else if (k === 'd') { e.preventDefault(); cycleViz(+1); }
+});
 
 document.getElementById('speed-slider').addEventListener('input', e => {
   ringSpeed = e.target.value / 50;
