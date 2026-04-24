@@ -1439,7 +1439,9 @@ progressWrap.addEventListener('mousemove', e => {
 });
 
 function syncPlayBtn() {
-  document.getElementById('play-pause').textContent = isPlaying ? '⏸' : '▶';
+  const btn = document.getElementById('play-pause');
+  btn.textContent = isPlaying ? '⏸' : '▶';
+  btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
 }
 
 function currentPos() {
@@ -2309,12 +2311,14 @@ function refreshStreamingAuthUI() {
 
 function openStreaming() {
   streamingBtn.classList.add('open');
+  streamingBtn.setAttribute('aria-expanded', 'true');
   streamingMenu.classList.add('open');
   refreshStreamingAuthUI();
 }
 
 function closeStreaming() {
   streamingBtn.classList.remove('open');
+  streamingBtn.setAttribute('aria-expanded', 'false');
   streamingMenu.classList.remove('open');
 }
 
