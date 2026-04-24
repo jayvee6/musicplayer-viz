@@ -76,45 +76,85 @@ function toSongItemApple(song) {
   return { id: t.id, name: t.name, subtitle: t.artists, artwork: t.albumArt, kind: 'song', track: t };
 }
 
-async function getLibrary(category) {
+// Fetch one page of an Apple Music library endpoint. Pagination uses the
+// `data.next` URL that Apple returns — an opaque path string we pass back on
+// the next call. Cursor shape: null (first page) or a string like
+// '/v1/me/library/artists?offset=50'. On the first page we add `limit=50`;
+// subsequent pages inherit whatever Apple put in `next`.
+//
+// Two-strategy fallback:
+//   1. MusicKit JS SDK — mk.api.music(path) passes through to Apple's REST.
+//      Works for both first-page paths with opts and arbitrary `next` strings.
+//   2. Raw fetch — if the SDK rejects the path (implementations vary across
+//      MusicKit JS versions), use the instance's developerToken +
+//      musicUserToken to call the Apple REST endpoint directly.
+async function fetchApplePage(path, cursor) {
   const mk = await window.AppleAuth.ready();
-  switch (category) {
-    case 'playlists': {
-      const res = await mk.api.music('/v1/me/library/playlists', { limit: 50 });
-      return (res.data && res.data.data || []).map(mapLibPlaylist);
-    }
-    case 'artists': {
-      const res = await mk.api.music('/v1/me/library/artists', { limit: 50 });
-      return (res.data && res.data.data || []).map(mapLibArtist);
-    }
-    case 'albums': {
-      const res = await mk.api.music('/v1/me/library/albums', { limit: 50 });
-      return (res.data && res.data.data || []).map(mapLibAlbum);
-    }
-    case 'songs': {
-      const res = await mk.api.music('/v1/me/library/songs', { limit: 50 });
-      return (res.data && res.data.data || []).map(toSongItemApple);
-    }
-    default: return [];
+  const reqPath = cursor || path;
+  const opts    = cursor ? undefined : { limit: 50 };
+  try {
+    const res  = await mk.api.music(reqPath, opts);
+    const body = res.data || {};
+    return { items: body.data || [], nextCursor: body.next || null };
+  } catch (sdkErr) {
+    // Strategy 2: raw HTTP with the instance's tokens. MusicKit exposes them
+    // on the instance; we rebuild the request against api.music.apple.com.
+    const devToken  = mk.developerToken || (mk._developerToken);
+    const userToken = mk.musicUserToken || (mk._musicUserToken);
+    if (!devToken || !userToken) throw sdkErr;
+    const qs  = cursor ? '' : '?limit=50';
+    const url = `https://api.music.apple.com${reqPath}${qs}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization:       `Bearer ${devToken}`,
+        'Music-User-Token':  userToken,
+      },
+    });
+    if (!res.ok) throw sdkErr; // surface the original SDK error, it's usually clearer
+    const body = await res.json();
+    return { items: body.data || [], nextCursor: body.next || null };
   }
 }
 
-async function getChildren(parentKind, parentId) {
-  const mk = await window.AppleAuth.ready();
+async function getLibrary(category, opts = {}) {
+  const cursor = opts.cursor;
+  switch (category) {
+    case 'playlists': {
+      const { items, nextCursor } = await fetchApplePage('/v1/me/library/playlists', cursor);
+      return { items: items.map(mapLibPlaylist), nextCursor };
+    }
+    case 'artists': {
+      const { items, nextCursor } = await fetchApplePage('/v1/me/library/artists', cursor);
+      return { items: items.map(mapLibArtist), nextCursor };
+    }
+    case 'albums': {
+      const { items, nextCursor } = await fetchApplePage('/v1/me/library/albums', cursor);
+      return { items: items.map(mapLibAlbum), nextCursor };
+    }
+    case 'songs': {
+      const { items, nextCursor } = await fetchApplePage('/v1/me/library/songs', cursor);
+      return { items: items.map(toSongItemApple), nextCursor };
+    }
+    default: return { items: [], nextCursor: null };
+  }
+}
+
+async function getChildren(parentKind, parentId, opts = {}) {
+  const cursor = opts.cursor;
   switch (parentKind) {
     case 'playlist': {
-      const res = await mk.api.music(`/v1/me/library/playlists/${parentId}/tracks`, { limit: 50 });
-      return (res.data && res.data.data || []).map(toSongItemApple);
+      const { items, nextCursor } = await fetchApplePage(`/v1/me/library/playlists/${parentId}/tracks`, cursor);
+      return { items: items.map(toSongItemApple), nextCursor };
     }
     case 'artist': {
-      const res = await mk.api.music(`/v1/me/library/artists/${parentId}/albums`, { limit: 50 });
-      return (res.data && res.data.data || []).map(mapLibAlbum);
+      const { items, nextCursor } = await fetchApplePage(`/v1/me/library/artists/${parentId}/albums`, cursor);
+      return { items: items.map(mapLibAlbum), nextCursor };
     }
     case 'album': {
-      const res = await mk.api.music(`/v1/me/library/albums/${parentId}/tracks`, { limit: 50 });
-      return (res.data && res.data.data || []).map(toSongItemApple);
+      const { items, nextCursor } = await fetchApplePage(`/v1/me/library/albums/${parentId}/tracks`, cursor);
+      return { items: items.map(toSongItemApple), nextCursor };
     }
-    default: return [];
+    default: return { items: [], nextCursor: null };
   }
 }
 
