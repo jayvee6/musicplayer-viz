@@ -135,6 +135,10 @@
       // rendered frame before render() draws the new one.
       try { mesh.renderer.clear(); } catch {}
       mesh.hide();
+      // Release GPU resources + remove canvas element. init()'s
+      // `if (!mesh) mesh = new ...` guard at line 127 rebuilds cleanly.
+      mesh.dispose();
+      mesh = null;
     }
     const s = sharedCanvas(); if (s) s.style.display = 'block';
   }

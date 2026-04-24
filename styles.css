@@ -1264,7 +1264,9 @@ body.hidden .viz-cycle-btn { display: none; }
   #controls {
     min-width: 0;
     width: calc(100vw - 24px);
-    left: 12px !important;  /* override the JS-positioned left; keep centered */
+    /* left is JS-managed: initPillPos() + resize listener keep it inside
+       viewport. No !important here — the JS writes inline style and we
+       want that to win. */
     padding: 10px 12px;
   }
 

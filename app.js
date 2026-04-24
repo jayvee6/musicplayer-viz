@@ -1308,15 +1308,19 @@ let currentMode = 0;
 function setMode(mode) {
   currentMode = mode;
   // Delegate canvas visibility + init/teardown + active-button styling to the
-  // viz registry. Legacy control-div toggles stay here since they're tied to
-  // the legacy mode indices (Wave 2+ viz will manage their own controls via
-  // initFn/teardownFn).
+  // viz registry. Wave 2+ viz manage their own control panels via
+  // initFn/teardownFn; the Wave 1 viz below still use fixed DOM panels,
+  // which are gated here by the registry's active-id (stable) instead of
+  // the mode index (shifts every time a viz is inserted into the list —
+  // was the root of "controls attach to the wrong viz" regressions
+  // during Wave 2+ ports).
   if (window.Viz) window.Viz.setMode(mode);
 
-  const hasSpeed = mode === 4 || mode === 5;
-  document.getElementById('vortex-controls').classList.toggle('visible', mode === 2);
-  document.getElementById('waves-controls').classList.toggle('visible', mode === 1);
-  document.getElementById('fluid-controls').classList.toggle('visible', mode === 7);
+  const id = window.Viz ? window.Viz.activeId : null;
+  const hasSpeed = id === 'hypno-rings' || id === 'spiral';
+  document.getElementById('vortex-controls').classList.toggle('visible', id === 'emoji-vortex');
+  document.getElementById('waves-controls').classList.toggle('visible', id === 'emoji-waves');
+  document.getElementById('fluid-controls').classList.toggle('visible', id === 'ferro');
   document.getElementById('speed-control').style.display = hasSpeed ? 'flex' : 'none';
 }
 
@@ -1439,7 +1443,9 @@ progressWrap.addEventListener('mousemove', e => {
 });
 
 function syncPlayBtn() {
-  document.getElementById('play-pause').textContent = isPlaying ? '⏸' : '▶';
+  const btn = document.getElementById('play-pause');
+  btn.textContent = isPlaying ? '⏸' : '▶';
+  btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
 }
 
 function currentPos() {
@@ -2309,12 +2315,14 @@ function refreshStreamingAuthUI() {
 
 function openStreaming() {
   streamingBtn.classList.add('open');
+  streamingBtn.setAttribute('aria-expanded', 'true');
   streamingMenu.classList.add('open');
   refreshStreamingAuthUI();
 }
 
 function closeStreaming() {
   streamingBtn.classList.remove('open');
+  streamingBtn.setAttribute('aria-expanded', 'false');
   streamingMenu.classList.remove('open');
 }
 
@@ -2442,7 +2450,7 @@ function activeCaptureKind() {
   return window._captureKind || 'capture';
 }
 
-function vizRefreshUI() {
+function vizRefreshUI({ preserveStatus = false } = {}) {
   const cap = window.AudioCapture && window.AudioCapture.isActive();
   const amb = window.AmbientMode && window.AmbientMode.isActive();
   const kind = cap ? activeCaptureKind() : null;
@@ -2461,6 +2469,9 @@ function vizRefreshUI() {
   vizAmbientBtn.hidden = cap || amb;
   vizOffBtn.hidden     = !(cap || amb);
 
+  // Callers that just wrote a transient message (e.g. a capture failure)
+  // set preserveStatus so the state-derived text below doesn't stomp it.
+  if (preserveStatus) return;
   if (isMic)      vizStatusEl.textContent = 'Listening to mic — point it at speakers for reactive visuals.';
   else if (isTab) vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
   else if (amb)   vizStatusEl.textContent = `Ambient mode — ${window.AmbientMode.getBpm()} BPM. Press T to tap tempo.`;
@@ -2472,15 +2483,18 @@ vizCaptureBtn.addEventListener('click', async e => {
   if (!audioCtx) initAudio();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
   if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
+  let ok = false;
   try {
     await window.AudioCapture.startTabCapture();
     window._captureKind = 'tab';
-    vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
+    ok = true;
   } catch (err) {
     console.error('[viz capture]', err);
     vizStatusEl.textContent = err.message || 'Capture failed';
   }
-  vizRefreshUI();
+  // On failure, keep the status message we just wrote — vizRefreshUI's
+  // state-derived text would otherwise stomp it with "Pick a source…".
+  vizRefreshUI({ preserveStatus: !ok });
 });
 
 vizMicBtn.addEventListener('click', async e => {
@@ -2490,15 +2504,16 @@ vizMicBtn.addEventListener('click', async e => {
   if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
   // If tab-capture is running, stop it first — only one capture at a time.
   if (window.AudioCapture && window.AudioCapture.isActive()) window.AudioCapture.stop();
+  let ok = false;
   try {
     await window.AudioCapture.startMicCapture();
     window._captureKind = 'mic';
-    vizStatusEl.textContent = 'Listening to mic — point it at speakers for reactive visuals.';
+    ok = true;
   } catch (err) {
     console.error('[viz mic]', err);
     vizStatusEl.textContent = err.message || 'Mic capture failed';
   }
-  vizRefreshUI();
+  vizRefreshUI({ preserveStatus: !ok });
 });
 
 vizAmbientBtn.addEventListener('click', e => {

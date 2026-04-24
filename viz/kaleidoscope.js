@@ -92,7 +92,7 @@
 
       float sat = 0.88 + u_bass * 0.12;
       float lum = 0.12 + ringBright * 0.22 + ring2Bright * 0.08 + spokeBright * 0.18;
-      lum *= (0.65 + u_energy * 0.70);
+      lum *= (0.70 + u_mid * 0.60);
       lum  = min(lum, 0.85);
 
       vec3 col = hsl2rgb(fract(hue), sat, lum);

@@ -8,6 +8,7 @@
 // re-minted on demand, so the .p8 stays server-side.
 
 const http   = require('http');
+const https  = require('https');
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
@@ -92,7 +93,28 @@ const MIME = {
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']);
 const MUSIC_DIR  = path.join(root, 'music');
-const PORT       = process.env.PORT || 3001;
+const PORT       = process.env.PORT       || 3001;
+const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+
+// ─── TLS (self-signed dev cert) ──────────────────────────────────────────────
+// When secrets/dev-{cert,key}.pem both exist, start HTTPS alongside HTTP so
+// LAN clients can access getUserMedia / getDisplayMedia — those APIs require
+// a secure context, and LAN IPs like 192.168.x.x are NOT considered secure
+// over plain HTTP (only localhost is). Certs are gitignored; regenerate via:
+//   openssl req -x509 -newkey rsa:2048 -nodes \
+//     -keyout secrets/dev-key.pem -out secrets/dev-cert.pem -days 365 \
+//     -subj "/CN=musicplayer-viz-dev" \
+//     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:<LAN>,IP:::1"
+function loadTLSCredentials() {
+  const certPath = path.join(root, 'secrets', 'dev-cert.pem');
+  const keyPath  = path.join(root, 'secrets', 'dev-key.pem');
+  try {
+    return {
+      cert: fs.readFileSync(certPath),
+      key:  fs.readFileSync(keyPath),
+    };
+  } catch { return null; }
+}
 
 function sendJSON(res, status, obj) {
   const body = JSON.stringify(obj);
@@ -103,7 +125,7 @@ function sendJSON(res, status, obj) {
   res.end(body);
 }
 
-http.createServer((req, res) => {
+function handleRequest(req, res) {
   let url = req.url.split('?')[0];
 
   if (url === '/api/tracks') {
@@ -148,8 +170,24 @@ http.createServer((req, res) => {
       res.end(data);
     }
   });
-}).listen(PORT, () => {
+}
+
+// HTTP — always on. localhost is already a secure context per the Fetch
+// spec, so getUserMedia / getDisplayMedia work here. LAN clients need HTTPS.
+http.createServer(handleRequest).listen(PORT, () => {
   console.log(`musicplayer-viz serving on http://localhost:${PORT}`);
   console.log(`  Spotify: ${SPOTIFY_CLIENT_ID ? 'configured' : 'NOT configured (set SPOTIFY_CLIENT_ID)'}`);
   console.log(`  Apple:   ${(APPLE_TEAM_ID && APPLE_KEY_ID && APPLE_PRIVATE_KEY_PATH) ? 'configured' : 'NOT configured (set APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_PATH)'}`);
 });
+
+// HTTPS — only if a self-signed cert was generated. Required for LAN clients
+// that want to use the capture-tab-audio / microphone reactive-visual paths;
+// those APIs are gated on a secure context and refuse plain HTTP LAN IPs.
+const tls = loadTLSCredentials();
+if (tls) {
+  https.createServer(tls, handleRequest).listen(HTTPS_PORT, () => {
+    console.log(`  HTTPS:   https://localhost:${HTTPS_PORT}  (self-signed — trust in Keychain or click-through)`);
+  });
+} else {
+  console.log(`  HTTPS:   disabled (secrets/dev-{cert,key}.pem missing — run openssl to enable LAN capture APIs)`);
+}
