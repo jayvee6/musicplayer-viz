@@ -136,6 +136,11 @@
         <button id="streaming-connect">Connect</button>
         <span id="streaming-auth-status">Not connected</span>
       </div>
+      <!-- Hidden directory picker used by the Local source. local-source.js
+           owns the change handler; chunks 6/7 parse + play the captured files.
+           webkitdirectory is Chromium + Safari + Edge; Firefox 111+. -->
+      <input type="file" id="local-folder-picker" webkitdirectory mozdirectory directory multiple hidden>
+
       <p id="streaming-hint">Once connected, open the <strong>iPod</strong> to browse your library.</p>
       <div id="viz-source">
         <div class="viz-source-title">Reactive visuals</div>

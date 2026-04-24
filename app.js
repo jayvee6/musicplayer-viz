@@ -2289,6 +2289,16 @@ streamingConnect.addEventListener('click', e => {
   refreshStreamingAuthUI();
 })();
 
+// Local source re-fires auth UI + iPod view after the folder picker returns
+// and ingests files. local-source.js dispatches this CustomEvent once its
+// module-scope library has at least one song.
+window.addEventListener('localsourcechanged', () => {
+  refreshStreamingAuthUI();
+  // If the iPod is open on the Local source, re-sync the menu so its first
+  // frame picks up the newly-ingested library instead of the empty view.
+  if (typeof syncIPodView === 'function') syncIPodView();
+});
+
 // ─── Spotify Web Playback SDK hooks ──────────────────────────────────────────
 
 if (window.SpotifyPlayer) {
