@@ -1469,33 +1469,13 @@ function cycleViz(delta) {
 document.getElementById('viz-cycle-prev')?.addEventListener('click', () => cycleViz(-1));
 document.getElementById('viz-cycle-next')?.addEventListener('click', () => cycleViz(+1));
 
-// ─── Keyboard accessibility ───────────────────────────────────────────────────
-// Arrow keys cycle visualizers. Space toggles play/pause.
-// Guard: skip when focus is inside a text input / slider so the user can still
-// type in viz control fields or drag sliders without accidentally switching modes.
-document.addEventListener('keydown', e => {
-  const tag  = document.activeElement ? document.activeElement.tagName : '';
-  const type = document.activeElement ? (document.activeElement.type || '') : '';
-  const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-  // Allow range/checkbox inputs to keep their default key behaviour, but still
-  // intercept ArrowLeft/Right when they're on a text or number input only if
-  // the input itself hasn't consumed the event (it always will for those types).
-  if (isInput && type !== 'range' && type !== 'checkbox') return;
-  // For range inputs, ArrowLeft/Right are consumed by the slider — let them be.
-  if (isInput && type === 'range') return;
-
-  if (e.key === 'ArrowLeft')  { e.preventDefault(); cycleViz(-1); }
-  if (e.key === 'ArrowRight') { e.preventDefault(); cycleViz(+1); }
-  if (e.key === ' ') {
-    // Space: toggle play/pause only when not focused on a button (buttons get
-    // click from Space by default; we only want the doc-level handler for the
-    // background / non-interactive areas).
-    if (tag === 'BUTTON') return;
-    e.preventDefault();
-    const btn = document.getElementById('play-pause');
-    if (btn && !btn.disabled) btn.click();
-  }
-});
+// Note: keyboard shortcuts for viz cycling (ArrowLeft/Right) were briefly
+// added here during an a11y pass and then reverted. The pre-existing iPod/
+// transport keyboard handler (defined later in this file) already binds
+// ArrowLeft/Right → seekBy(±5) and Space → togglePlayback, so duplicating
+// those at the document level caused both track-seek AND viz-cycle to fire
+// on the same key press. Viz cycling stays mouse-only via the edge arrow
+// buttons + dot-row clicks; seek/play remain on the arrow keys.
 
 document.getElementById('speed-slider').addEventListener('input', e => {
   ringSpeed = e.target.value / 50;
@@ -2032,6 +2012,7 @@ document.addEventListener('fullscreenchange', () => {
 window.addEventListener('resize', () => {
   resizeCanvas();
   if (threeReady) {
+    threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     threeRenderer.setSize(window.innerWidth, window.innerHeight);
     blobMesh.material.uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
   }
