@@ -106,50 +106,92 @@ function toSongItem(track) {
   };
 }
 
-async function getLibrary(category) {
+// getLibrary / getChildren both support opaque cursor-based pagination. Pass
+// `{ cursor }` on subsequent calls to continue where the previous call left
+// off; a null `nextCursor` in the response means end-of-list. Cursors are
+// adapter-private — most Spotify endpoints encode an integer offset, except:
+//   - artists: Spotify's /me/following uses a cursor-paginated model keyed by
+//     the last artist's id (`after=<id>`), so the cursor IS that id string.
+//   - album children: we preserve the album artwork across pages so pagination
+//     doesn't refetch /albums/{id} each page. Cursor is { offset, artwork }.
+// All shapes are opaque to the UI.
+
+async function getLibrary(category, opts = {}) {
+  const cursor = opts.cursor;
+  const limit  = opts.limit || 50;
+
   switch (category) {
     case 'playlists': {
-      const data = await apiFetch('/me/playlists?limit=50');
-      return (data.items || []).map(mapPlaylist);
+      const offset = cursor || 0;
+      const data = await apiFetch(`/me/playlists?limit=${limit}&offset=${offset}`);
+      const items = (data.items || []).map(mapPlaylist);
+      return { items, nextCursor: data.next ? offset + items.length : null };
     }
     case 'artists': {
-      const data = await apiFetch('/me/following?type=artist&limit=50');
-      const items = (data.artists && data.artists.items) || [];
-      return items.map(mapArtist);
+      // Cursor-paginated (not offset). The cursor IS a Spotify artist id;
+      // first-page requests pass no `after` param.
+      const q = cursor ? `&after=${encodeURIComponent(cursor)}` : '';
+      const data = await apiFetch(`/me/following?type=artist&limit=${limit}${q}`);
+      const followers = data.artists || {};
+      const items = (followers.items || []).map(mapArtist);
+      const nextCursor = followers.next
+        ? (followers.cursors && followers.cursors.after) || null
+        : null;
+      return { items, nextCursor };
     }
     case 'albums': {
-      const data = await apiFetch('/me/albums?limit=50');
-      return (data.items || []).map(w => mapAlbum(w.album));
+      const offset = cursor || 0;
+      const data = await apiFetch(`/me/albums?limit=${limit}&offset=${offset}`);
+      const items = (data.items || []).map(w => mapAlbum(w.album));
+      return { items, nextCursor: data.next ? offset + items.length : null };
     }
     case 'songs': {
-      const data = await apiFetch('/me/tracks?limit=50');
-      return (data.items || []).map(w => toSongItem(mapTrack(w.track)));
+      const offset = cursor || 0;
+      const data = await apiFetch(`/me/tracks?limit=${limit}&offset=${offset}`);
+      const items = (data.items || []).map(w => toSongItem(mapTrack(w.track)));
+      return { items, nextCursor: data.next ? offset + items.length : null };
     }
-    default: return [];
+    default: return { items: [], nextCursor: null };
   }
 }
 
-async function getChildren(parentKind, parentId) {
+async function getChildren(parentKind, parentId, opts = {}) {
+  const cursor = opts.cursor;
+  const limit  = opts.limit || 50;
+
   switch (parentKind) {
     case 'playlist': {
-      const data = await apiFetch(`/playlists/${parentId}/tracks?limit=50`);
-      return (data.items || [])
+      const offset = cursor || 0;
+      const data = await apiFetch(`/playlists/${parentId}/tracks?limit=${limit}&offset=${offset}`);
+      const items = (data.items || [])
         .filter(w => w.track && w.track.id)
         .map(w => toSongItem(mapTrack(w.track)));
+      return { items, nextCursor: data.next ? offset + items.length : null };
     }
     case 'artist': {
-      // Use Spotify's default limit; overriding it triggered a 400 "Invalid limit" on this endpoint.
-      const data = await apiFetch(`/artists/${parentId}/albums?include_groups=album,single`);
-      return (data.items || []).map(mapAlbum);
+      // /artists/{id}/albums rejects an explicit `limit` param with
+      // 400 "Invalid limit" — use Spotify's default page size (~20) and
+      // only pass offset. `data.next` remains the authoritative signal.
+      const offset = cursor || 0;
+      const data = await apiFetch(`/artists/${parentId}/albums?include_groups=album,single&offset=${offset}`);
+      const items = (data.items || []).map(mapAlbum);
+      return { items, nextCursor: data.next ? offset + items.length : null };
     }
     case 'album': {
-      // /albums/{id}/tracks items don't carry album art, so fetch the album once and inject.
-      const album = await apiFetch(`/albums/${parentId}`);
-      const artwork = pickAlbumArt(album.images);
-      const data = await apiFetch(`/albums/${parentId}/tracks?limit=50`);
-      return (data.items || []).map(t => toSongItem(mapTrack(t, { albumArtOverride: artwork })));
+      // Compound cursor { offset, artwork } — the album art lookup only
+      // needs to happen once per album, not once per page.
+      const offset  = (cursor && cursor.offset) || 0;
+      let   artwork = cursor && cursor.artwork;
+      if (artwork === undefined) {
+        const album = await apiFetch(`/albums/${parentId}`);
+        artwork = pickAlbumArt(album.images);
+      }
+      const data = await apiFetch(`/albums/${parentId}/tracks?limit=${limit}&offset=${offset}`);
+      const items = (data.items || []).map(t => toSongItem(mapTrack(t, { albumArtOverride: artwork })));
+      const nextCursor = data.next ? { offset: offset + items.length, artwork } : null;
+      return { items, nextCursor };
     }
-    default: return [];
+    default: return { items: [], nextCursor: null };
   }
 }
 

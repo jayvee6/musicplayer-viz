@@ -1745,7 +1745,18 @@ async function loadFrame(frame, loader) {
   frame.items = [];
   renderIPodMenu();
   try {
-    frame.items = await loader();
+    const result = await loader();
+    // Accept both the new paginated shape { items, nextCursor } (Chunk 1:
+    // Spotify) and the legacy plain-array shape (Apple + local, until their
+    // pagination chunks land). Chunk 3 wires real cursor-paginated scroll —
+    // for now we only read `items` so the UI continues to work unchanged.
+    if (Array.isArray(result)) {
+      frame.items = result;
+    } else if (result && Array.isArray(result.items)) {
+      frame.items = result.items;
+    } else {
+      frame.items = [];
+    }
   } catch (e) {
     console.error('[ipod load]', e);
     frame.error = e.message || 'Failed to load';
