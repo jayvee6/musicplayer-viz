@@ -297,6 +297,10 @@ function updateAudioValues() {
 
 const canvas2d = document.getElementById('canvas-2d');
 const ctx      = canvas2d.getContext('2d');
+// Shared 2D context for viz/*.js files so they can draw into the same
+// DPR-scaled canvas without re-acquiring the context.
+window.ctx      = ctx;
+window.canvas2d = canvas2d;
 
 // Logical canvas dimensions (CSS pixels). Used by all render functions.
 // Physical backing buffer = W*dpr × H*dpr so Chrome doesn't dim emoji.
@@ -2021,25 +2025,45 @@ if (window.AppleSource && window.AppleSource.onTrackChange) {
 // ─── Reactive-visuals source (tab capture OR ambient pulse) ──────────────────
 
 const vizCaptureBtn = document.getElementById('viz-capture-btn');
+const vizMicBtn     = document.getElementById('viz-mic-btn');
 const vizAmbientBtn = document.getElementById('viz-ambient-btn');
 const vizOffBtn     = document.getElementById('viz-off-btn');
 const vizStatusEl   = document.getElementById('viz-source-status');
 
+// Capture-module `kind` field is set in attach(); we distinguish mic from
+// tab-share by checking the audio track's label — browsers label tab-share
+// streams with something like "Tab audio" and mic streams with the mic name.
+function activeCaptureKind() {
+  if (!(window.AudioCapture && window.AudioCapture.isActive())) return null;
+  // Heuristic: we flagged it via emitStatus('active', {kind}). We don't store
+  // it long-term, so fall back to "capture" if unknown — the UI still shows
+  // the Stop button, which is what matters.
+  return window._captureKind || 'capture';
+}
+
 function vizRefreshUI() {
   const cap = window.AudioCapture && window.AudioCapture.isActive();
   const amb = window.AmbientMode && window.AmbientMode.isActive();
-  vizCaptureBtn.classList.toggle('active', cap);
+  const kind = cap ? activeCaptureKind() : null;
+  const isMic = cap && kind === 'mic';
+  const isTab = cap && kind !== 'mic';
+
+  vizCaptureBtn.classList.toggle('active', isTab);
+  vizMicBtn    .classList.toggle('active', isMic);
   vizAmbientBtn.classList.toggle('active', amb);
-  vizCaptureBtn.hidden = cap;
+
+  // Hide the inactive choices while a source is active; only the matching
+  // button stays visible (as the "currently on" indicator).
+  vizCaptureBtn.hidden = cap && !isTab || amb;
+  vizMicBtn    .hidden = cap && !isMic || amb;
+  vizAmbientBtn.hidden = cap || amb && false; // keep ambient visible unless a capture is active
   vizAmbientBtn.hidden = cap || amb;
   vizOffBtn.hidden     = !(cap || amb);
-  if (cap) {
-    vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
-  } else if (amb) {
-    vizStatusEl.textContent = `Ambient mode — ${window.AmbientMode.getBpm()} BPM. Press T to tap tempo.`;
-  } else {
-    vizStatusEl.textContent = 'Pick a source to drive the visualizer.';
-  }
+
+  if (isMic)      vizStatusEl.textContent = 'Listening to mic — point it at speakers for reactive visuals.';
+  else if (isTab) vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
+  else if (amb)   vizStatusEl.textContent = `Ambient mode — ${window.AmbientMode.getBpm()} BPM. Press T to tap tempo.`;
+  else            vizStatusEl.textContent = 'Pick a source to drive the visualizer.';
 }
 
 vizCaptureBtn.addEventListener('click', async e => {
@@ -2049,10 +2073,29 @@ vizCaptureBtn.addEventListener('click', async e => {
   if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
   try {
     await window.AudioCapture.startTabCapture();
+    window._captureKind = 'tab';
     vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
   } catch (err) {
     console.error('[viz capture]', err);
     vizStatusEl.textContent = err.message || 'Capture failed';
+  }
+  vizRefreshUI();
+});
+
+vizMicBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  if (!audioCtx) initAudio();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
+  // If tab-capture is running, stop it first — only one capture at a time.
+  if (window.AudioCapture && window.AudioCapture.isActive()) window.AudioCapture.stop();
+  try {
+    await window.AudioCapture.startMicCapture();
+    window._captureKind = 'mic';
+    vizStatusEl.textContent = 'Listening to mic — point it at speakers for reactive visuals.';
+  } catch (err) {
+    console.error('[viz mic]', err);
+    vizStatusEl.textContent = err.message || 'Mic capture failed';
   }
   vizRefreshUI();
 });
@@ -2068,6 +2111,7 @@ vizOffBtn.addEventListener('click', e => {
   e.stopPropagation();
   if (window.AudioCapture) window.AudioCapture.stop();
   if (window.AmbientMode)  window.AmbientMode.stop();
+  window._captureKind = null;
   vizRefreshUI();
 });
 
