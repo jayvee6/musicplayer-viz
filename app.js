@@ -1727,10 +1727,27 @@ function renderIPodMenu() {
     li.addEventListener('click', () => {
       frame.selectedIdx = idx;
       renderIPodMenu();
+      // Also fire the load-more trigger on click — clicking near the bottom
+      // of a partially-loaded list should prime the next page.
+      loadMoreIfNeeded(frame);
       ipodActivate();
     });
     ipodMenuList.appendChild(li);
   });
+
+  // Paging notes appended after the item rows. NOT added to frame.items, so
+  // selection indexing + clamps stay correct.
+  if (frame.loadingMore) {
+    const li = document.createElement('li');
+    li.className = 'ipod-menu-note';
+    li.textContent = 'Loading more…';
+    ipodMenuList.appendChild(li);
+  } else if (frame.lastLoadError) {
+    const li = document.createElement('li');
+    li.className = 'ipod-menu-note error';
+    li.textContent = "Couldn't load more";
+    ipodMenuList.appendChild(li);
+  }
 
   // Scroll selected into view.
   const sel = ipodMenuList.querySelector('.ipod-menu-item.selected');
@@ -1739,23 +1756,38 @@ function renderIPodMenu() {
   }
 }
 
-async function loadFrame(frame, loader) {
-  frame.loading = true;
-  frame.error = null;
-  frame.items = [];
+// Load-more behavior. The threshold means "start fetching when the user is
+// within N items of the bottom"; the cooldown prevents request storms when
+// the user holds down an arrow key.
+const LOAD_MORE_THRESHOLD = 5;
+const LOAD_MORE_COOLDOWN_MS = 300;
+
+async function loadFrame(frame, makeLoader) {
+  // Stash the loader closure on the frame so subsequent pages can re-invoke
+  // it with the frame's evolving cursor. makeLoader signature:
+  //   ({ cursor }) => Promise<{ items, nextCursor } | Item[]>
+  frame.loader         = makeLoader;
+  frame.loading        = true;
+  frame.error          = null;
+  frame.items          = [];
+  frame.cursor         = null;
+  frame.hasMore        = false;
+  frame.loadingMore    = false;
+  frame.lastLoadError  = null;
+  frame._lastLoadMoreAt = 0;
   renderIPodMenu();
   try {
-    const result = await loader();
-    // Accept both the new paginated shape { items, nextCursor } (Chunk 1:
-    // Spotify) and the legacy plain-array shape (Apple + local, until their
-    // pagination chunks land). Chunk 3 wires real cursor-paginated scroll —
-    // for now we only read `items` so the UI continues to work unchanged.
+    const result = await makeLoader({ cursor: null });
+    // Accept both the new paginated shape { items, nextCursor } and the
+    // legacy plain-array shape. Plain arrays terminate at this page (no
+    // pagination state to advance); paginated shapes track their cursor.
     if (Array.isArray(result)) {
-      frame.items = result;
+      frame.items   = result;
+      frame.hasMore = false;
     } else if (result && Array.isArray(result.items)) {
-      frame.items = result.items;
-    } else {
-      frame.items = [];
+      frame.items   = result.items;
+      frame.cursor  = result.nextCursor != null ? result.nextCursor : null;
+      frame.hasMore = frame.cursor !== null;
     }
   } catch (e) {
     console.error('[ipod load]', e);
@@ -1764,6 +1796,49 @@ async function loadFrame(frame, loader) {
     frame.loading = false;
     frame.selectedIdx = 0;
     renderIPodMenu();
+  }
+}
+
+// Fires when the selection is near the bottom of a paginated frame. Idempotent
+// under bursty invocation — guarded by (a) frame.loadingMore (request in
+// flight), (b) frame.lastLoadError (last attempt failed; do not retry until
+// user backs out/re-enters), and (c) the 300ms cooldown. Held-arrow-key
+// scroll fires this ~every frame; the cooldown keeps the API hit rate sane.
+async function loadMoreIfNeeded(frame) {
+  if (!frame || !frame.loader) return;
+  if (!frame.hasMore || frame.loadingMore || frame.lastLoadError) return;
+  const distanceFromEnd = frame.items.length - 1 - frame.selectedIdx;
+  if (distanceFromEnd > LOAD_MORE_THRESHOLD) return;
+  const now = performance.now();
+  if (now - frame._lastLoadMoreAt < LOAD_MORE_COOLDOWN_MS) return;
+  frame._lastLoadMoreAt = now;
+
+  frame.loadingMore = true;
+  renderIPodMenu(); // show the "Loading more…" note row
+  try {
+    const result = await frame.loader({ cursor: frame.cursor });
+    // Back-nav race guard: if the user popped this frame while the request
+    // was inflight, don't touch the UI (the parent frame is active now).
+    if (currentFrame() !== frame) return;
+    if (result && Array.isArray(result.items)) {
+      frame.items   = frame.items.concat(result.items);
+      frame.cursor  = result.nextCursor != null ? result.nextCursor : null;
+      frame.hasMore = frame.cursor !== null;
+    } else {
+      // Unexpected shape (e.g. legacy plain-array source). End pagination.
+      frame.hasMore = false;
+    }
+  } catch (e) {
+    if (currentFrame() !== frame) return;
+    console.error('[ipod load more]', e);
+    frame.lastLoadError = e.message || 'Could not load more';
+    // Leave hasMore alone — user backing out + re-entering the level
+    // triggers a fresh first-page load which clears lastLoadError.
+  } finally {
+    if (currentFrame() === frame) {
+      frame.loadingMore = false;
+      renderIPodMenu();
+    }
   }
 }
 
@@ -1784,7 +1859,7 @@ function ipodActivate() {
       queueKind: it.id === 'songs' ? 'flat' : null,
     };
     ipodStack.push(child);
-    loadFrame(child, () => src.getLibrary(it.id));
+    loadFrame(child, (opts) => src.getLibrary(it.id, opts));
   } else if (it.kind === 'playlist' || it.kind === 'artist' || it.kind === 'album') {
     // Tag the drilled-in frame with source-neutral context so that picking a
     // song inside it queues the whole playlist/album. Each source's playTrack
@@ -1798,7 +1873,7 @@ function ipodActivate() {
       contextId:   usesAsContext ? it.id   : null,
     };
     ipodStack.push(child);
-    loadFrame(child, () => src.getChildren(it.kind, it.id));
+    loadFrame(child, (opts) => src.getChildren(it.kind, it.id, opts));
   } else if (it.kind === 'song') {
     const track = it.track;
     if (!track) return;
@@ -1867,6 +1942,9 @@ function ipodMoveSelection(delta) {
   if (!frame || !frame.items.length) return;
   frame.selectedIdx = Math.max(0, Math.min(frame.items.length - 1, frame.selectedIdx + delta));
   renderIPodMenu();
+  // Scrolling toward the bottom primes the next page (fire-and-forget).
+  // The cooldown inside loadMoreIfNeeded absorbs held-key scroll bursts.
+  loadMoreIfNeeded(frame);
 }
 
 function showIPod() {
