@@ -1976,8 +1976,11 @@ document.getElementById('btn-hide').addEventListener('click', () => {
   setControlsHidden(!controlsHidden);
 });
 
-// Auto-hide utility clusters after 3s of mouse inactivity (screensaver mode)
+// Auto-hide utility clusters after 3s of mouse inactivity (screensaver mode).
+// Keyboard hints ride along — they live in the same bottom band as the other
+// clusters, so hiding them together keeps the "screensaver" read clean.
 const signInButtons = document.getElementById('sign-in-buttons');
+const kbdHints      = document.getElementById('kbd-hints');
 function resetHideTimer() {
   uiButtons.style.opacity = '1';
   uiButtons.style.pointerEvents = 'all';
@@ -1985,6 +1988,7 @@ function resetHideTimer() {
     signInButtons.style.opacity = '1';
     signInButtons.style.pointerEvents = 'all';
   }
+  if (kbdHints) kbdHints.style.opacity = '1';
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     if (controlsHidden) {
@@ -1994,6 +1998,7 @@ function resetHideTimer() {
         signInButtons.style.opacity = '0';
         signInButtons.style.pointerEvents = 'none';
       }
+      if (kbdHints) kbdHints.style.opacity = '0';
     }
   }, 3000);
 }

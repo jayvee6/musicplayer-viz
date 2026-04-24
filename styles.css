@@ -290,6 +290,57 @@ body {
   color: #fff;
 }
 
+/* ─── Keyboard hints (bottom-center, matches sign-in + ui-buttons bottom band) */
+
+#kbd-hints {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  z-index: 200;
+  pointer-events: none;
+  user-select: none;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  transition: opacity 0.28s ease;
+  white-space: nowrap;
+}
+
+#kbd-hints span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#kbd-hints kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.05);
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* Hide on narrow viewports — bottom band gets crowded and the pill
+   itself is already stacked in the 640px media query. */
+@media (max-width: 640px) {
+  #kbd-hints { display: none; }
+}
+
 /* iPod toggle button inside controls */
 #ipod-toggle {
   background: rgba(255, 255, 255, 0.1);
