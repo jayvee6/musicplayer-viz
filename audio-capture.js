@@ -59,6 +59,12 @@ function attach(stream) {
 }
 
 async function startTabCapture() {
+  // Secure-context check first — on insecure origins (plain-HTTP LAN IPs)
+  // `navigator.mediaDevices` is undefined, which makes the generic "not
+  // supported" error below misleading. Surface the real reason.
+  if (!window.isSecureContext) {
+    throw new Error('Tab capture requires HTTPS or localhost. Use https://… or http://localhost:3001.');
+  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
     throw new Error('Tab capture not supported in this browser. Try Chrome/Edge.');
   }
@@ -94,6 +100,9 @@ async function startDeviceCapture(deviceId) {
 // speakers" DRM workaround. No device picker, no BlackHole, just the
 // browser's default audio input.
 async function startMicCapture() {
+  if (!window.isSecureContext) {
+    throw new Error('Microphone access requires HTTPS or localhost. Use https://… or http://localhost:3001.');
+  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     throw new Error('Microphone capture not supported in this browser.');
   }

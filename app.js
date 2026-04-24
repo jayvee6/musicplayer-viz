@@ -2450,7 +2450,7 @@ function activeCaptureKind() {
   return window._captureKind || 'capture';
 }
 
-function vizRefreshUI() {
+function vizRefreshUI({ preserveStatus = false } = {}) {
   const cap = window.AudioCapture && window.AudioCapture.isActive();
   const amb = window.AmbientMode && window.AmbientMode.isActive();
   const kind = cap ? activeCaptureKind() : null;
@@ -2469,6 +2469,9 @@ function vizRefreshUI() {
   vizAmbientBtn.hidden = cap || amb;
   vizOffBtn.hidden     = !(cap || amb);
 
+  // Callers that just wrote a transient message (e.g. a capture failure)
+  // set preserveStatus so the state-derived text below doesn't stomp it.
+  if (preserveStatus) return;
   if (isMic)      vizStatusEl.textContent = 'Listening to mic — point it at speakers for reactive visuals.';
   else if (isTab) vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
   else if (amb)   vizStatusEl.textContent = `Ambient mode — ${window.AmbientMode.getBpm()} BPM. Press T to tap tempo.`;
@@ -2480,15 +2483,18 @@ vizCaptureBtn.addEventListener('click', async e => {
   if (!audioCtx) initAudio();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
   if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
+  let ok = false;
   try {
     await window.AudioCapture.startTabCapture();
     window._captureKind = 'tab';
-    vizStatusEl.textContent = 'Capturing tab audio — real FFT active.';
+    ok = true;
   } catch (err) {
     console.error('[viz capture]', err);
     vizStatusEl.textContent = err.message || 'Capture failed';
   }
-  vizRefreshUI();
+  // On failure, keep the status message we just wrote — vizRefreshUI's
+  // state-derived text would otherwise stomp it with "Pick a source…".
+  vizRefreshUI({ preserveStatus: !ok });
 });
 
 vizMicBtn.addEventListener('click', async e => {
@@ -2498,15 +2504,16 @@ vizMicBtn.addEventListener('click', async e => {
   if (window.AmbientMode && window.AmbientMode.isActive()) window.AmbientMode.stop();
   // If tab-capture is running, stop it first — only one capture at a time.
   if (window.AudioCapture && window.AudioCapture.isActive()) window.AudioCapture.stop();
+  let ok = false;
   try {
     await window.AudioCapture.startMicCapture();
     window._captureKind = 'mic';
-    vizStatusEl.textContent = 'Listening to mic — point it at speakers for reactive visuals.';
+    ok = true;
   } catch (err) {
     console.error('[viz mic]', err);
     vizStatusEl.textContent = err.message || 'Mic capture failed';
   }
-  vizRefreshUI();
+  vizRefreshUI({ preserveStatus: !ok });
 });
 
 vizAmbientBtn.addEventListener('click', e => {
