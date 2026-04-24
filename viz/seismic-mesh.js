@@ -130,7 +130,12 @@
   }
 
   function teardown() {
-    if (mesh) mesh.hide();
+    if (mesh) {
+      // Clear own framebuffer so next activation doesn't flash the last
+      // rendered frame before render() draws the new one.
+      try { mesh.renderer.clear(); } catch {}
+      mesh.hide();
+    }
     const s = sharedCanvas(); if (s) s.style.display = 'block';
   }
 
