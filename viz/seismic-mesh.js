@@ -33,7 +33,10 @@
       this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
       this.renderer.setClearColor(0x000000, 0);
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-      this.renderer.setSize(parent.clientWidth, parent.clientHeight);
+      // Use window dimensions for initial size — the container has
+      // display:none at construction time (webgl-container is hidden until
+      // this viz is activated), so clientWidth would be 0.
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
       this.canvas = this.renderer.domElement;
       // Absolute fill inside webgl-container. z-index sits above the
       // shared canvas so it wins when both are attached (we also hide
@@ -65,9 +68,13 @@
       this.originalPositions.set(posArr);
 
       // Window resize — scale renderer + camera aspect to the current
-      // container size. Bound once so removeEventListener works on dispose.
+      // viewport size. Use window.innerWidth/Height rather than
+      // parent.clientWidth/clientHeight because webgl-container has
+      // display:none while this viz is inactive, which would report 0×0
+      // and corrupt the renderer canvas on the next activation.
       this._onResize = () => {
-        const w = parent.clientWidth, h = parent.clientHeight;
+        const w = window.innerWidth, h = window.innerHeight;
+        if (w <= 0 || h <= 0) return; // guard against degenerate resize events
         this.renderer.setSize(w, h);
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
