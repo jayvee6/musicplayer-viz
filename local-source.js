@@ -389,21 +389,109 @@ async function getChildren(parentKind, parentId, opts = {}) {
 // routes next/prev through an in-memory queue derived from the current
 // context (album / playlist / flat songs-list).
 
-async function playTrack(/* trackId, queue */) {
-  throw new Error('Local playback ships in chunk 7');
-}
-async function pause()         { return; }
-async function resume()        { return; }
-async function seekToMs(/*ms*/) { return; }
-async function nextTrack()     { return; }
-async function previousTrack() { return; }
+// ─── Playback + queue ────────────────────────────────────────────────────
+// The Local source drives the existing buffer-mode engine via the
+// window.LocalPlayback bridge (defined in app.js). We own the queue
+// ordering + auto-advance here; the bridge owns the actual decode/start/
+// onended plumbing.
 
+let _queue    = [];
+let _queueIdx = -1;
+
+// Build an ordered queue from the (optional) play context. Mirrors the
+// contract Spotify + Apple expect: contextKind+contextId for album/playlist
+// playback; trackIds for an explicit flat list. Local has no playlists yet
+// so only 'album' context is meaningful — an artist drill-down passes the
+// plain album id → albumKind resolution.
+function resolveQueue(startTrackId, opts) {
+  const o = opts || {};
+  if (Array.isArray(o.trackIds) && o.trackIds.length) {
+    return o.trackIds
+      .map(id => _library.songs.find(s => s.id === id))
+      .filter(Boolean);
+  }
+  if (o.contextKind === 'album' && o.contextId) {
+    const alb = _library.byAlbumId.get(o.contextId);
+    if (alb) {
+      return alb.songIds
+        .map(id => _library.songs.find(s => s.id === id))
+        .filter(Boolean);
+    }
+  }
+  // Fallback: queue contains just the selected song.
+  const solo = _library.songs.find(s => s.id === startTrackId);
+  return solo ? [solo] : [];
+}
+
+function notifyTrackChange(song) {
+  for (const cb of trackChangeSubs) {
+    try { cb(song && song.track ? song.track : null); } catch {}
+  }
+}
+
+async function playAtIndex(idx) {
+  if (idx < 0 || idx >= _queue.length) return;
+  const song = _queue[idx];
+  const rec  = _library.bySongId.get(song.id);
+  if (!rec || !rec.file) return;
+  _queueIdx = idx;
+
+  const meta = {
+    title:    song.name,
+    artist:   song.track ? song.track.artists : '',
+    albumArt: song.track ? song.track.albumArt : null,
+    trackId:  song.id,
+  };
+
+  // onEnded auto-advances to the next track in the queue. End-of-queue
+  // leaves _localOnEnded null in app.js so playback just stops.
+  const onEnded = () => {
+    if (_queueIdx + 1 < _queue.length) {
+      playAtIndex(_queueIdx + 1).catch(e => console.error('[local-source auto-advance]', e));
+    }
+  };
+
+  if (!window.LocalPlayback) {
+    console.error('[local-source] window.LocalPlayback bridge missing (app.js not loaded?)');
+    return;
+  }
+  await window.LocalPlayback.play(rec.file, meta, onEnded);
+  notifyTrackChange(song);
+}
+
+async function playTrack(trackId, queueOptions) {
+  _queue = resolveQueue(trackId, queueOptions || {});
+  const startIdx = Math.max(0, _queue.findIndex(s => s.id === trackId));
+  await playAtIndex(startIdx);
+}
+
+async function nextTrack() {
+  if (_queueIdx + 1 < _queue.length) await playAtIndex(_queueIdx + 1);
+}
+async function previousTrack() {
+  if (_queueIdx - 1 >= 0) await playAtIndex(_queueIdx - 1);
+}
+
+async function pause()  { return window.LocalPlayback && window.LocalPlayback.pause(); }
+async function resume() { return window.LocalPlayback && window.LocalPlayback.resume(); }
+async function seekToMs(ms) {
+  return window.LocalPlayback && window.LocalPlayback.seekToMs(ms);
+}
+
+// Shuffle + repeat intentionally no-op for this chunk. Linear A→Z first;
+// variant modes are a later tuning pass.
 async function setShuffle(/* on */)  { return; }
 async function setRepeat(/* mode */) { return; }
 
-function getPositionMs()     { return 0; }
-function getDurationMs()     { return 0; }
-function getCurrentTrackId() { return null; }
+function getPositionMs() {
+  return window.LocalPlayback ? window.LocalPlayback.getPositionMs() : 0;
+}
+function getDurationMs() {
+  return window.LocalPlayback ? window.LocalPlayback.getDurationMs() : 0;
+}
+function getCurrentTrackId() {
+  return window.LocalPlayback ? window.LocalPlayback.getCurrentTrackId() : null;
+}
 
 const trackChangeSubs = [];
 function onTrackChange(cb) { trackChangeSubs.push(cb); }
