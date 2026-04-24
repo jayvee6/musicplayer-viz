@@ -78,6 +78,7 @@
   let warmLight = null;
   let sky       = null;    // nebula skybox mesh (inside-out sphere at r=250)
   let skyMat    = null;    // ShaderMaterial for sky — u_time feeds fbm phase
+  let stars     = null;    // 3500-star BufferGeometry Points field (Phase 2)
   let composer  = null;
   let bloomPass = null;
   let lastT     = 0;
@@ -200,6 +201,45 @@
     sky = new THREE.Mesh(new THREE.SphereGeometry(250, 48, 32), skyMat);
     scene.add(sky);
 
+    // Starfield — verbatim port from
+    //   /StudioJoeMusic/.claude/skills/studiojoe-viz/showcase/chrome-orb.html:122-147
+    //
+    // 3500 points distributed uniformly on a spherical shell (r=100..160)
+    // between the orb (r=15) and the nebula (r=250). Star temperature
+    // (cool vs warm) is randomised; RGB tints per vertex. sizeAttenuation
+    // + toneMapped:false keeps them bright and parallaxing in depth.
+    //
+    // Phase 2 of chrome-orb realign (Packet F).
+    const STAR_COUNT = 3500;
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(STAR_COUNT * 3);
+    const starCol = new Float32Array(STAR_COUNT * 3);
+    for (let i = 0; i < STAR_COUNT; i++) {
+      const phi = Math.random() * Math.PI * 2;
+      const ct  = Math.random() * 2 - 1;
+      const st  = Math.sqrt(1 - ct * ct);
+      const r   = 100 + Math.random() * 60;
+      starPos[i * 3 + 0] = r * st * Math.cos(phi);
+      starPos[i * 3 + 1] = r * ct;
+      starPos[i * 3 + 2] = r * st * Math.sin(phi);
+      const temp = Math.random();
+      const brightness = 0.6 + Math.random() * 0.7;
+      starCol[i * 3 + 0] = (0.85 + temp * 0.35) * brightness;
+      starCol[i * 3 + 1] = (0.90 + Math.random() * 0.15) * brightness;
+      starCol[i * 3 + 2] = (0.95 + (1 - temp) * 0.25) * brightness;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    starGeo.setAttribute('color',    new THREE.BufferAttribute(starCol, 3));
+    stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+      size:            0.5,
+      vertexColors:    true,
+      sizeAttenuation: true,
+      toneMapped:      false,
+      transparent:     true,
+      opacity:         1.0,
+    }));
+    scene.add(stars);
+
     // Procedural cube env — 6 seeded faces, same as prototype. Mark the
     // texture as sRGB so colour values in the canvas match what the
     // material picks up after tone mapping.
@@ -263,6 +303,10 @@
       if (sky.geometry) sky.geometry.dispose();
       if (sky.material) sky.material.dispose();
     }
+    if (stars) {
+      if (stars.geometry) stars.geometry.dispose();
+      if (stars.material) stars.material.dispose();
+    }
     if (scene && scene.environment && typeof scene.environment.dispose === 'function') {
       scene.environment.dispose();
     }
@@ -272,6 +316,7 @@
     warmLight = null;
     sky       = null;
     skyMat    = null;
+    stars     = null;
     scene     = null;
     composer  = null;
     bloomPass = null;
@@ -332,6 +377,11 @@
     // viz doesn't jolt the animation with whatever time passed while it
     // was inactive.
     skyMat.uniforms.u_time.value = elapsed;
+
+    // Starfield parallax — absolute rotation driven by elapsed (Phase 2).
+    // Matches showcase exactly: y-axis spins slowly, x-axis gently wobbles.
+    stars.rotation.y = elapsed * 0.004;
+    stars.rotation.x = Math.sin(elapsed * 0.02) * 0.05;
 
     // Aspect + composer size sync. Bloom runs at half-res (playbook:
     // postprocess at half-res, ~3-5ms saved on mobile) — must be applied
