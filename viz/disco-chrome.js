@@ -76,6 +76,8 @@
   let ball      = null;
   let coolLight = null;
   let warmLight = null;
+  let sky       = null;    // nebula skybox mesh (inside-out sphere at r=250)
+  let skyMat    = null;    // ShaderMaterial for sky — u_time feeds fbm phase
   let composer  = null;
   let bloomPass = null;
   let lastT     = 0;
@@ -105,6 +107,8 @@
     });
 
     scene = new THREE.Scene();
+    // scene.background stays black as a fallback for any tiny gaps; the
+    // nebula sphere below covers the entire visible frustum regardless.
     scene.background = new THREE.Color(0x000000);
 
     // Camera — identical values to the prototype.
@@ -114,9 +118,96 @@
     camera.position.set(0, 8, 45);
     camera.lookAt(0, 0, 0);
 
+    // Nebula skybox — verbatim port from
+    //   /StudioJoeMusic/.claude/skills/studiojoe-viz/showcase/chrome-orb.html:45–120
+    //
+    // An inside-out sphere (BackSide + depthWrite:false) at r=250 gives
+    // every reflection direction SOMETHING warm to pick up — dim indigo
+    // floors, magenta ceilings, animated fbm nebula clouds, horizon hot
+    // pocket. toneMapped:false bypasses ACES so the shader's linear
+    // colour values are the final pixel values.
+    //
+    // Phase 1 of chrome-orb realign (Packet F). Phases 2+ add 3500-star
+    // Points field, CubeCamera live reflection, 4 orbiting coloured
+    // lights. Each ships as its own branch + PR.
+    skyMat = new THREE.ShaderMaterial({
+      uniforms: { u_time: { value: 0 } },
+      vertexShader: `
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        uniform float u_time;
+        varying vec3 vDir;
+
+        float hash(vec3 p) {
+          p = fract(p * 0.3183099 + 0.1);
+          p *= 17.0;
+          return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+        }
+        float noise3(vec3 p) {
+          vec3 i = floor(p);
+          vec3 f = fract(p);
+          f = f*f*(3.0 - 2.0*f);
+          return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+                         mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+                     mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                         mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+        }
+        float fbm(vec3 p) {
+          float v = 0.0, a = 0.5;
+          for (int i = 0; i < 5; i++) {
+            v += a * noise3(p);
+            p = p * 2.0 + vec3(3.1, 1.7, 2.3);
+            a *= 0.5;
+          }
+          return v;
+        }
+
+        void main() {
+          vec3 d = normalize(vDir);
+
+          // Base vertical gradient — indigo/purple bottom → warm magenta top.
+          float y01 = d.y * 0.5 + 0.5;
+          vec3 bottom = vec3(0.015, 0.010, 0.040);
+          vec3 mid    = vec3(0.050, 0.025, 0.090);
+          vec3 top    = vec3(0.090, 0.030, 0.120);
+          vec3 col = mix(bottom, mid, smoothstep(0.0, 0.55, y01));
+          col      = mix(col, top, smoothstep(0.50, 1.0, y01));
+
+          // Procedural nebula clouds — fbm twice, two tinted layers.
+          float n1 = fbm(d * 1.8 + vec3(u_time * 0.005, 0.0, 0.0));
+          float n2 = fbm(d * 3.4 + vec3(0.0, u_time * 0.004, 0.0));
+          vec3 nebulaA = vec3(0.55, 0.18, 0.95) * pow(n1, 2.0) * 0.85;   // magenta
+          vec3 nebulaB = vec3(0.18, 0.48, 0.95) * pow(n2, 2.0) * 0.55;   // blue
+          col += nebulaA + nebulaB;
+
+          // Hot orange/pink pocket near the horizon for interest.
+          float pocket = smoothstep(0.35, 0.55, n1) * smoothstep(0.3, 0.7, y01) * 0.3;
+          col += vec3(1.0, 0.5, 0.3) * pocket;
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+      side:       THREE.BackSide,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    sky = new THREE.Mesh(new THREE.SphereGeometry(250, 48, 32), skyMat);
+    scene.add(sky);
+
     // Procedural cube env — 6 seeded faces, same as prototype. Mark the
     // texture as sRGB so colour values in the canvas match what the
     // material picks up after tone mapping.
+    //
+    // NOTE: this still drives MATERIAL reflections (scene.environment).
+    // Phase 3 of the realign replaces this with CubeCamera for live
+    // reflections off the nebula. For Phase 1 the nebula is only the
+    // visible backdrop; the orb still reflects the baked faces.
     const envFaces = [1, 2, 3, 4, 5, 6].map(makeEnvFace);
     const envTex = new THREE.CubeTexture(envFaces);
     envTex.encoding = THREE.sRGBEncoding;
@@ -168,6 +259,10 @@
       if (ball.geometry) ball.geometry.dispose();
       if (ball.material) ball.material.dispose();
     }
+    if (sky) {
+      if (sky.geometry) sky.geometry.dispose();
+      if (sky.material) sky.material.dispose();
+    }
     if (scene && scene.environment && typeof scene.environment.dispose === 'function') {
       scene.environment.dispose();
     }
@@ -175,6 +270,8 @@
     ball      = null;
     coolLight = null;
     warmLight = null;
+    sky       = null;
+    skyMat    = null;
     scene     = null;
     composer  = null;
     bloomPass = null;
@@ -229,6 +326,12 @@
     );
 
     bloomPass.strength = 2.0 + beat * 0.6;
+
+    // Nebula skybox — u_time drives fbm phase so clouds drift slowly.
+    // Uses elapsed-since-init rather than wall clock so re-entering the
+    // viz doesn't jolt the animation with whatever time passed while it
+    // was inactive.
+    skyMat.uniforms.u_time.value = elapsed;
 
     // Aspect + composer size sync. Bloom runs at half-res (playbook:
     // postprocess at half-res, ~3-5ms saved on mobile) — must be applied
