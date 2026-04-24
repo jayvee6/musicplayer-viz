@@ -1,18 +1,17 @@
 (() => {
 // Local Library source — a MusicSource adapter backed by files the user picks
-// from their own machine via a browser folder picker. This file is the stub
-// scaffolding (chunk 4 of 7). The actual file ingestion + ID3 parsing +
-// playback land in chunks 5–7:
+// from their own machine via a browser folder picker. Chunks 4+5 ship the
+// picker + filename-based song index; chunks 6/7 add ID3 parsing and
+// playback:
 //
-//   5/7  webkitdirectory picker — captures a FileList the user selects.
+//   4/7  Adapter stub + Local button in the sources picker.
+//   5/7  webkitdirectory picker — captures a FileList the user selects,
+//        filters to audio extensions, builds filename-based song entries.
 //   6/7  Client-side ID3 parsing via music-metadata (browser build) inside
-//        a Web Worker; builds an in-memory artist/album/song index.
+//        a Web Worker; upgrades entries to proper metadata + builds
+//        artist/album indexes.
 //   7/7  Playback + queue — playTrack resolves the chosen file to an
 //        ObjectURL and delegates to the existing buffer-mode engine in app.js.
-//
-// Until those land, this adapter registers itself so the UI has a third
-// source option alongside Spotify + Apple, but every data method returns
-// empty and every playback method is a no-op.
 
 // Module-scope state — populated by chunks 5+. Kept here so chunks can be
 // reviewed / reverted in isolation without shuffling the registration code.
@@ -29,17 +28,130 @@ let _library = {
 
 function isAuthed() {
   // "Authed" for the local source means the user has picked a folder and the
-  // parse worker has produced at least one indexed song. Until chunk 5 ships
-  // the picker, this is always false so the iPod overlay's auth-gated views
-  // still work correctly (the "Connect a music account to browse your
-  // library" empty view shows until ingestion completes).
+  // ingestion has produced at least one song entry. Until that happens, the
+  // iPod overlay's auth-gated "Connect a music account to browse your
+  // library" empty view shows.
   return _library.ingestedCount > 0;
 }
 
+// Audio extensions we accept from the folder pick. Mirrors serve.js's server-
+// side AUDIO_EXTS so the client + server agree on what counts as music.
+const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']);
+
+function fileExt(name) {
+  const i = name.lastIndexOf('.');
+  return i < 0 ? '' : name.slice(i).toLowerCase();
+}
+
+// FNV-1a 32-bit hash → short base36 id. Used to derive stable ids from the
+// file's webkitRelativePath so the same file has the same id across page
+// reloads (assuming the user picks the same folder). Chunks 6+ will layer
+// artist/album ids from parsed metadata on top; song ids stay file-hash.
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+// Strip extension + collapse underscores/dashes to spaces for a reasonable
+// fallback title before ID3 parsing lands in chunk 6. "03 - Song Title.mp3"
+// becomes "03  Song Title"; good enough to read while the worker chews.
+function titleFromName(name) {
+  const base = name.replace(/\.[^.]+$/, '');
+  return base.replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function ingestFileList(fileList) {
+  const files = Array.from(fileList).filter(f => AUDIO_EXTS.has(fileExt(f.name)));
+  if (!files.length) {
+    console.warn('[local-source] picker returned no audio files');
+    return;
+  }
+
+  // Sort alphabetically by relative path so Songs reads A→Z out of the gate.
+  files.sort((a, b) => {
+    const pa = a.webkitRelativePath || a.name;
+    const pb = b.webkitRelativePath || b.name;
+    return pa.localeCompare(pb);
+  });
+
+  const songs = [];
+  const bySongId = new Map();
+  for (const file of files) {
+    const path = file.webkitRelativePath || file.name;
+    const id   = 'loc_' + fnv1a(path);
+    const title = titleFromName(file.name);
+    // Chunk-5 shape: id/name/kind only, with a track stub for the iPod's
+    // song-playback path. Chunk 6 enriches these with real artist/album/
+    // durationMs/albumArt after the worker parses ID3.
+    const item = {
+      id,
+      name:     title,
+      subtitle: null,
+      artwork:  null,
+      kind:     'song',
+      track: {
+        id,
+        name:         title,
+        artists:      '',
+        albumArt:     null,
+        previewUrl:   null,
+        durationMs:   0,
+        hasFullTrack: true,
+      },
+    };
+    songs.push(item);
+    bySongId.set(id, { file, meta: { title } });
+  }
+
+  _library = {
+    songs,
+    artists:       [],      // chunk 6 will populate via ID3
+    albums:        [],      // chunk 6 will populate via ID3
+    playlists:     [],
+    byArtistId:    new Map(),
+    byAlbumId:     new Map(),
+    bySongId,
+    ingestedCount: songs.length,
+  };
+
+  // Broadcast so the sign-in UI updates (auth state flipped) and any open
+  // iPod frame can re-sync. app.js listens via the same event name.
+  window.dispatchEvent(new CustomEvent('localsourcechanged', {
+    detail: { ingestedCount: _library.ingestedCount },
+  }));
+}
+
+// Wire the hidden folder picker once the DOM is ready. We attach listeners
+// here (not in app.js) so local-source.js owns its full lifecycle.
+function bindPicker() {
+  const input = document.getElementById('local-folder-picker');
+  if (!input) return null;
+  input.addEventListener('change', ev => {
+    const files = ev.target.files;
+    if (files && files.length) ingestFileList(files);
+    // Clear the input so picking the same folder again still fires change.
+    ev.target.value = '';
+  });
+  return input;
+}
+let _pickerInput = null;
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { _pickerInput = bindPicker(); });
+} else {
+  _pickerInput = bindPicker();
+}
+
 async function connect() {
-  // Chunk 5 will replace this with the folder-picker trigger.
-  console.warn('[local-source] connect() — folder picker ships in chunk 5');
-  return;
+  if (!_pickerInput) _pickerInput = bindPicker();
+  if (!_pickerInput) {
+    console.error('[local-source] no #local-folder-picker element found');
+    return;
+  }
+  _pickerInput.click(); // triggers the OS folder picker
 }
 
 async function search(/* query */) {
