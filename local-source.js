@@ -78,15 +78,18 @@ function ingestFileList(fileList) {
     return pa.localeCompare(pb);
   });
 
+  // Release any art ObjectURLs from a previous pick so we don't leak.
+  revokeArtUrls(_library);
+
   const songs = [];
   const bySongId = new Map();
   for (const file of files) {
     const path = file.webkitRelativePath || file.name;
     const id   = 'loc_' + fnv1a(path);
     const title = titleFromName(file.name);
-    // Chunk-5 shape: id/name/kind only, with a track stub for the iPod's
-    // song-playback path. Chunk 6 enriches these with real artist/album/
-    // durationMs/albumArt after the worker parses ID3.
+    // Chunk-5 filename-based shape. Chunk 6 upgrades each entry's track
+    // fields + the item-level artwork as ID3 results stream in from the
+    // worker, and builds the artists/albums indexes in parallel.
     const item = {
       id,
       name:     title,
@@ -104,25 +107,204 @@ function ingestFileList(fileList) {
       },
     };
     songs.push(item);
-    bySongId.set(id, { file, meta: { title } });
+    bySongId.set(id, { file, meta: { title }, path });
   }
 
   _library = {
     songs,
-    artists:       [],      // chunk 6 will populate via ID3
-    albums:        [],      // chunk 6 will populate via ID3
+    artists:       [],      // populated progressively by the worker
+    albums:        [],      // populated progressively by the worker
     playlists:     [],
     byArtistId:    new Map(),
     byAlbumId:     new Map(),
     bySongId,
     ingestedCount: songs.length,
+    _artistByKey:  new Map(),  // lower-cased artist name → artistId
+    _albumByKey:   new Map(),  // artistId + '::' + lower album → albumId
+    _artUrls:      [],          // Object URLs to revoke on re-pick
   };
 
-  // Broadcast so the sign-in UI updates (auth state flipped) and any open
-  // iPod frame can re-sync. app.js listens via the same event name.
+  // First notify — Songs list is immediately browsable with filename titles.
+  // Subsequent dispatches happen as the worker streams metadata back.
   window.dispatchEvent(new CustomEvent('localsourcechanged', {
-    detail: { ingestedCount: _library.ingestedCount },
+    detail: { ingestedCount: _library.ingestedCount, phase: 'initial' },
   }));
+
+  // Kick off ID3 parsing in the worker.
+  parseLibraryWithWorker(_library);
+}
+
+function revokeArtUrls(lib) {
+  if (!lib || !lib._artUrls) return;
+  for (const url of lib._artUrls) {
+    try { URL.revokeObjectURL(url); } catch {}
+  }
+  lib._artUrls = [];
+}
+
+// Build the worker once per page session; terminate on re-pick so there's no
+// stale parse storm from the previous library competing for CPU.
+let _worker = null;
+function getWorker() {
+  if (_worker) { try { _worker.terminate(); } catch {} }
+  _worker = new Worker('local-parse-worker.js', { type: 'module' });
+  return _worker;
+}
+
+// FNV-1a-keyed deduplication for artist + album. Artist id is hashed off the
+// lowercased artist name; album id folds the artist in so "Thriller" by two
+// different artists stays distinct. Both prefixed so iPod item IDs don't
+// collide with song IDs.
+function keyArtist(name) {
+  return 'art_' + fnv1a(name.toLowerCase().trim());
+}
+function keyAlbum(artistName, albumName) {
+  return 'alb_' + fnv1a(artistName.toLowerCase().trim() + '::' + albumName.toLowerCase().trim());
+}
+
+// Update cadence: rebuild the artists/albums arrays + fire a progress event
+// every N parses so the iPod doesn't stutter on huge libraries but the user
+// still sees populate live.
+const UPDATE_EVERY = 20;
+
+function parseLibraryWithWorker(lib) {
+  const worker = getWorker();
+  const pending = new Set(lib.bySongId.keys());
+  let sinceLastRefresh = 0;
+
+  worker.onmessage = (ev) => {
+    const msg = ev.data;
+    if (!msg || msg.type !== 'parsed') return;
+
+    const rec = lib.bySongId.get(msg.id);
+    if (!rec) return; // library swapped while parse was in flight
+
+    if (msg.ok && msg.meta) {
+      applyParsedMeta(lib, msg.id, rec, msg.meta);
+    }
+    pending.delete(msg.id);
+    sinceLastRefresh++;
+
+    if (sinceLastRefresh >= UPDATE_EVERY || pending.size === 0) {
+      rebuildArtistAlbumArrays(lib);
+      window.dispatchEvent(new CustomEvent('localsourcechanged', {
+        detail: {
+          ingestedCount: lib.ingestedCount,
+          parsedCount:   lib.songs.length - pending.size,
+          phase:         pending.size === 0 ? 'complete' : 'progress',
+        },
+      }));
+      sinceLastRefresh = 0;
+    }
+  };
+
+  // Dispatch all parses up front — worker handles them sequentially. For
+  // huge libraries we could throttle here to avoid copying every File into
+  // the worker at once, but structured-cloning File objects is cheap (the
+  // underlying blob ref transfers, not the bytes).
+  for (const [id, rec] of lib.bySongId) {
+    worker.postMessage({ type: 'parse', id, file: rec.file });
+  }
+}
+
+function applyParsedMeta(lib, songId, rec, meta) {
+  const song = lib.songs.find(s => s.id === songId);
+  if (!song) return;
+
+  // Title / artist / album fall back to what we already had (filename title
+  // for missing ID3 title; empty string elsewhere).
+  if (meta.title)  song.name = meta.title;
+  song.track.name = song.name;
+
+  const artistName = (meta.albumartist || meta.artist || '').trim();
+  const albumName  = (meta.album || '').trim();
+
+  // Build album art ObjectURL once per track. music-metadata hands us raw
+  // bytes + mime; we wrap it as a Blob and mint an ObjectURL. Revocation
+  // happens at next re-pick.
+  let artUrl = null;
+  if (meta.picture && meta.picture.bytes && meta.picture.bytes.byteLength) {
+    try {
+      const blob = new Blob([meta.picture.bytes], { type: meta.picture.format || 'image/jpeg' });
+      artUrl = URL.createObjectURL(blob);
+      lib._artUrls.push(artUrl);
+    } catch {}
+  }
+
+  song.track.artists    = artistName;
+  song.subtitle         = artistName || null;
+  song.track.durationMs = Math.round((meta.durationSec || 0) * 1000);
+  song.artwork          = artUrl || song.artwork;
+  song.track.albumArt   = artUrl || song.track.albumArt;
+
+  // Artist + album dedup. An empty artist name means "Unknown" — still
+  // bucket so every song is reachable via Artists drill-down.
+  const artistKey = artistName || 'Unknown Artist';
+  const albumKey  = albumName  || null;
+
+  let artistId = lib._artistByKey.get(artistKey.toLowerCase());
+  if (!artistId) {
+    artistId = keyArtist(artistKey);
+    lib._artistByKey.set(artistKey.toLowerCase(), artistId);
+    lib.byArtistId.set(artistId, { name: artistKey, albumIds: new Set() });
+  }
+
+  if (albumKey) {
+    const albKeyLc = artistKey.toLowerCase() + '::' + albumKey.toLowerCase();
+    let albumId = lib._albumByKey.get(albKeyLc);
+    if (!albumId) {
+      albumId = keyAlbum(artistKey, albumKey);
+      lib._albumByKey.set(albKeyLc, albumId);
+      lib.byAlbumId.set(albumId, {
+        id: albumId,
+        name: albumKey,
+        artistName: artistKey,
+        artistId,
+        artwork: artUrl || null,
+        songIds: [],
+      });
+      lib.byArtistId.get(artistId).albumIds.add(albumId);
+    }
+    const album = lib.byAlbumId.get(albumId);
+    if (!album.songIds.includes(songId)) album.songIds.push(songId);
+    // First-album-art wins for the album tile; songs can differ.
+    if (!album.artwork && artUrl) album.artwork = artUrl;
+    rec.albumId  = albumId;
+  }
+  rec.artistId = artistId;
+  rec.meta     = {
+    title:       song.name,
+    artist:      artistName,
+    album:       albumName,
+    durationSec: meta.durationSec || 0,
+  };
+}
+
+function rebuildArtistAlbumArrays(lib) {
+  // Sort artists by name, albums by artistName + name.
+  const artists = Array.from(lib.byArtistId.entries()).map(([id, rec]) => ({
+    id,
+    name:     rec.name,
+    subtitle: null,
+    artwork:  null,
+    kind:     'artist',
+  }));
+  artists.sort((a, b) => a.name.localeCompare(b.name));
+
+  const albums = Array.from(lib.byAlbumId.values()).map(alb => ({
+    id:       alb.id,
+    name:     alb.name,
+    subtitle: alb.artistName,
+    artwork:  alb.artwork,
+    kind:     'album',
+  }));
+  albums.sort((a, b) => {
+    const artistCmp = (a.subtitle || '').localeCompare(b.subtitle || '');
+    return artistCmp !== 0 ? artistCmp : a.name.localeCompare(b.name);
+  });
+
+  lib.artists = artists;
+  lib.albums  = albums;
 }
 
 // Wire the hidden folder picker once the DOM is ready. We attach listeners
@@ -172,8 +354,32 @@ async function getLibrary(category, opts = {}) {
   }
 }
 
-async function getChildren(/* parentKind, parentId, opts */) {
-  // Chunk 6 will look up via byArtistId / byAlbumId indexes.
+async function getChildren(parentKind, parentId, opts = {}) {
+  void opts;
+  if (parentKind === 'artist') {
+    const rec = _library.byArtistId.get(parentId);
+    if (!rec) return { items: [], nextCursor: null };
+    const items = Array.from(rec.albumIds)
+      .map(aid => _library.byAlbumId.get(aid))
+      .filter(Boolean)
+      .map(alb => ({
+        id:       alb.id,
+        name:     alb.name,
+        subtitle: alb.artistName,
+        artwork:  alb.artwork,
+        kind:     'album',
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { items, nextCursor: null };
+  }
+  if (parentKind === 'album') {
+    const alb = _library.byAlbumId.get(parentId);
+    if (!alb) return { items: [], nextCursor: null };
+    const items = alb.songIds
+      .map(sid => _library.songs.find(s => s.id === sid))
+      .filter(Boolean);
+    return { items, nextCursor: null };
+  }
   return { items: [], nextCursor: null };
 }
 
