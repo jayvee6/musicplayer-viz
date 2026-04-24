@@ -160,6 +160,26 @@
     if (!window.vizGL) return;
     window.vizGL.popRendererState(rendererToken);
     rendererToken = null;
+    // Release GPU resources (playbook: TeardownFn should dispose scene
+    // materials/geometries/textures on mode-out, not just hide the canvas).
+    // This is the heaviest viz: 6×512² env cube + 1280-tri disco ball +
+    // bloom MRT chain. Render's `if (!scene) init()` rebuilds cleanly.
+    if (ball) {
+      if (ball.geometry) ball.geometry.dispose();
+      if (ball.material) ball.material.dispose();
+    }
+    if (scene && scene.environment && typeof scene.environment.dispose === 'function') {
+      scene.environment.dispose();
+    }
+    if (composer && typeof composer.dispose === 'function') composer.dispose();
+    ball      = null;
+    coolLight = null;
+    warmLight = null;
+    scene     = null;
+    composer  = null;
+    bloomPass = null;
+    startT    = null;
+    lastT     = 0;
   }
 
   function render(t, frame) {
@@ -210,13 +230,16 @@
 
     bloomPass.strength = 2.0 + beat * 0.6;
 
-    // Aspect + composer size sync.
+    // Aspect + composer size sync. Bloom runs at half-res (playbook:
+    // postprocess at half-res, ~3-5ms saved on mobile) — must be applied
+    // AFTER composer.setSize since that internally resizes every pass.
     const w = window.innerWidth, h = window.innerHeight;
     if (camera.aspect !== w / h) {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     }
     composer.setSize(w, h);
+    bloomPass.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
 
     composer.render(dt);
   }

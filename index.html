@@ -49,33 +49,33 @@
       <div id="track-details">
         <img id="album-art" alt="" style="display:none">
         <div id="track-text">
-          <span id="track-name">No track loaded</span>
+          <span id="track-name" aria-live="polite" aria-atomic="true">No track loaded</span>
           <span id="track-time">0:00 / 0:00</span>
         </div>
       </div>
 
       <!-- Center: transport (absolutely centered in pill) -->
       <div id="transport">
-        <button class="transport-btn" id="btn-shuffle" title="Shuffle">🔀</button>
-        <button class="transport-btn" id="btn-prev"    title="Previous track"  disabled>⏮</button>
-        <button class="transport-btn" id="btn-rewind"  title="Rewind 10s"       disabled>⏪</button>
-        <button class="transport-btn" id="play-pause"  title="Play / Pause"     disabled>▶</button>
-        <button class="transport-btn" id="btn-fwd"     title="Fast forward 10s" disabled>⏩</button>
-        <button class="transport-btn" id="btn-next"    title="Next track"       disabled>⏭</button>
-        <button class="transport-btn" id="btn-repeat"  title="Repeat: Off">🔁</button>
+        <button class="transport-btn" id="btn-shuffle" title="Shuffle"           aria-label="Shuffle">🔀</button>
+        <button class="transport-btn" id="btn-prev"    title="Previous track"   aria-label="Previous track"    disabled>⏮</button>
+        <button class="transport-btn" id="btn-rewind"  title="Rewind 10s"       aria-label="Rewind 10 seconds" disabled>⏪</button>
+        <button class="transport-btn" id="play-pause"  title="Play / Pause"     aria-label="Play"              disabled>▶</button>
+        <button class="transport-btn" id="btn-fwd"     title="Fast forward 10s" aria-label="Fast forward 10 seconds" disabled>⏩</button>
+        <button class="transport-btn" id="btn-next"    title="Next track"       aria-label="Next track"        disabled>⏭</button>
+        <button class="transport-btn" id="btn-repeat"  title="Repeat: Off"      aria-label="Repeat: Off">🔁</button>
       </div>
 
       <!-- Right: file load + playlist + iPod -->
       <div id="music-actions">
-        <label class="file-label" title="Load audio file">
-          <input type="file" id="audio-input" accept="audio/*">
+        <label class="file-label" title="Load audio file" aria-label="Load audio file">
+          <input type="file" id="audio-input" accept="audio/*" aria-label="Choose audio file">
           <span>Load</span>
         </label>
         <div id="playlist-wrap">
-          <button id="playlist-btn" title="Music folder tracks">Tracks</button>
+          <button id="playlist-btn" title="Music folder tracks" aria-label="Show track list">Tracks</button>
           <ul id="playlist-menu"></ul>
         </div>
-        <button id="ipod-toggle">iPod</button>
+        <button id="ipod-toggle" aria-label="Open iPod music browser">iPod</button>
       </div>
 
     </div>
@@ -114,7 +114,7 @@
 
       <!-- Mode buttons row: populated at bootstrap by viz-registry.js.
            Each registered visualizer appends a .mode-btn here. -->
-      <div id="mode-buttons"></div>
+      <div id="mode-buttons" role="group" aria-label="Visualizer selector"></div>
 
     </div>
 
@@ -122,9 +122,9 @@
 
   <!-- ── Sign-in (bottom-left, mirrors #ui-buttons) ──────── -->
   <div id="sign-in-buttons">
-    <button class="ui-btn" id="signin-btn" title="Music accounts">
-      <span class="signin-icon">👤</span>
-      <span class="signin-dot"></span>
+    <button class="ui-btn" id="signin-btn" title="Music accounts" aria-label="Music accounts" aria-expanded="false" aria-haspopup="true">
+      <span class="signin-icon" aria-hidden="true">👤</span>
+      <span class="signin-dot" aria-hidden="true"></span>
     </button>
     <div id="streaming-menu">
       <div id="streaming-sources">
@@ -149,11 +149,18 @@
     </div>
   </div>
 
+  <!-- ── Keyboard hints (bottom-center) ──────────────────── -->
+  <div id="kbd-hints" aria-hidden="true">
+    <span><kbd>A</kbd><kbd>D</kbd> viz</span>
+    <span><kbd>←</kbd><kbd>→</kbd> seek</span>
+    <span><kbd>Space</kbd> play</span>
+  </div>
+
   <!-- ── Utility buttons (bottom-right) ──────────────────── -->
   <div id="ui-buttons">
-    <button class="ui-btn" id="btn-ipod" title="iPod mode">🎵</button>
-    <button class="ui-btn" id="btn-hide" title="Hide controls">👁</button>
-    <button class="ui-btn" id="btn-fullscreen" title="Fullscreen">⛶</button>
+    <button class="ui-btn" id="btn-ipod"       title="iPod mode"      aria-label="Toggle iPod mode">🎵</button>
+    <button class="ui-btn" id="btn-hide"       title="Hide controls"  aria-label="Hide controls">👁</button>
+    <button class="ui-btn" id="btn-fullscreen" title="Fullscreen"     aria-label="Toggle fullscreen">⛶</button>
   </div>
 
   <!-- ── iPod overlay ─────────────────────────────────────── -->

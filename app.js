@@ -811,6 +811,14 @@ const VERT_SHADER = `
   }
 `;
 
+// Playbook: mobile MAX_STEPS=32, desktop=64. Detect once at module load so
+// the shader gets the right cap baked in when ShaderMaterial compiles it.
+// Old value was a hardcoded 96 — too deep even for desktop, and a ~3x hit
+// on mobile relative to playbook target. Fragment-bound viz this heavy
+// must cap iterations for the low-end device to hit 30fps.
+const BLOB_IS_MOBILE = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
+const BLOB_MAX_STEPS = BLOB_IS_MOBILE ? 32 : 64;
+
 const FRAG_SHADER = `
   precision highp float;
   uniform float u_time;
@@ -848,7 +856,7 @@ const FRAG_SHADER = `
     float t   = 0.0;
     bool  hit = false;
 
-    for (int i = 0; i < 96; i++) {
+    for (int i = 0; i < ${BLOB_MAX_STEPS}; i++) {
       float d = scene(ro + rd * t);
       if (d < 0.0008) { hit = true; break; }
       if (t > 8.0)    break;
@@ -1441,9 +1449,11 @@ document.getElementById('btn-next').addEventListener('click', async () => {
 syncShuffleUI();
 syncRepeatUI();
 
-document.querySelectorAll('.mode-btn').forEach((btn, i) => {
-  btn.addEventListener('click', () => setMode(i));
-});
+// NOTE: .mode-btn click handlers are attached inside viz-registry.js at
+// appendButton() time. Do NOT add a second querySelectorAll here — it caused
+// every legacy dot (0-7) to fire setMode twice per click (double teardown +
+// init, visible as "viz runs twice"). The registry-owned handler is the sole
+// authority for mode-button clicks.
 
 // Edge cycle buttons — mirror of the iOS swipe-left/right gesture. Wraps
 // around at either end so there's always a next/previous.
@@ -1458,6 +1468,21 @@ function cycleViz(delta) {
 }
 document.getElementById('viz-cycle-prev')?.addEventListener('click', () => cycleViz(-1));
 document.getElementById('viz-cycle-next')?.addEventListener('click', () => cycleViz(+1));
+
+// Viz cycling via A / D keys. Intentionally NOT on ArrowLeft/Right — those
+// are reserved for track seek (±5s) by the iPod/transport keyboard handler
+// later in this file. Gamer-style A/D mirrors the edge cycle arrows (← prev,
+// → next) without colliding with transport.
+document.addEventListener('keydown', e => {
+  // Ignore modifier combos (browser shortcuts) and typing-in-input focus.
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) return;
+
+  const k = e.key.toLowerCase();
+  if (k === 'a') { e.preventDefault(); cycleViz(-1); }
+  else if (k === 'd') { e.preventDefault(); cycleViz(+1); }
+});
 
 document.getElementById('speed-slider').addEventListener('input', e => {
   ringSpeed = e.target.value / 50;
@@ -1951,8 +1976,12 @@ document.getElementById('btn-hide').addEventListener('click', () => {
   setControlsHidden(!controlsHidden);
 });
 
-// Auto-hide utility clusters after 3s of mouse inactivity (screensaver mode)
+// Auto-hide utility clusters after 3s of mouse inactivity (screensaver mode).
+// Keyboard hints ride along — they live in the same bottom band as the other
+// clusters, so hiding them together keeps the "screensaver" read clean.
 const signInButtons = document.getElementById('sign-in-buttons');
+const kbdHints      = document.getElementById('kbd-hints');
+const titleChip     = document.getElementById('viz-title-overlay');
 function resetHideTimer() {
   uiButtons.style.opacity = '1';
   uiButtons.style.pointerEvents = 'all';
@@ -1960,6 +1989,8 @@ function resetHideTimer() {
     signInButtons.style.opacity = '1';
     signInButtons.style.pointerEvents = 'all';
   }
+  if (kbdHints)  kbdHints.style.opacity  = '1';
+  if (titleChip) titleChip.style.opacity = '';   // fall back to CSS (.visible controls it)
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     if (controlsHidden) {
@@ -1969,6 +2000,8 @@ function resetHideTimer() {
         signInButtons.style.opacity = '0';
         signInButtons.style.pointerEvents = 'none';
       }
+      if (kbdHints)  kbdHints.style.opacity  = '0';
+      if (titleChip) titleChip.style.opacity = '0';
     }
   }, 3000);
 }
@@ -1994,6 +2027,7 @@ document.addEventListener('fullscreenchange', () => {
 window.addEventListener('resize', () => {
   resizeCanvas();
   if (threeReady) {
+    threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     threeRenderer.setSize(window.innerWidth, window.innerHeight);
     blobMesh.material.uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
   }

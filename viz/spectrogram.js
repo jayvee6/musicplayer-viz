@@ -139,6 +139,20 @@
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
   }
 
+  // Release GPU resources (shader mat + DataTexture + plane geom) on mode-out.
+  // The `hist` Uint8Array is module-scope so the rolling spectrogram window
+  // is preserved across entries. Render's `if (!scene) init()` rebuilds.
+  function teardown() {
+    if (scene) {
+      scene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }
+    if (mat) mat.dispose();
+    if (histTex) histTex.dispose();
+    histTex = null;
+    mat     = null;
+    scene   = null;
+  }
+
   function render(t, frame) {
     if (!scene) init();
     if (!scene) return;
@@ -163,6 +177,7 @@
     kind:     'webgl',
     initFn:   init,
     renderFn: render,
+    teardownFn: teardown,
     controls: [
       { id: 'react', label: 'React', min: 0,   max: 2.0, step: 0.05, default: 1.0 },
       // Gamma < 1 flattens (quiet parts readable); > 1 crushes (only peaks).

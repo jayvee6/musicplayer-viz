@@ -17,6 +17,7 @@
 
 (() => {
   const entries = [];          // registration order = mode index
+  const entryById = new Map(); // id → entry (O(1) lookup for controlValue)
   const inited  = new Set();   // ids that have had initFn run
   let activeId  = null;        // currently displayed viz id (null until setMode)
 
@@ -26,7 +27,7 @@
     if (typeof def.renderFn !== 'function')   throw new Error('Viz.register: renderFn required');
     if (def.kind !== '2d' && def.kind !== 'webgl') throw new Error('Viz.register: kind must be "2d" or "webgl"');
     if (entries.some(e => e.id === def.id))   throw new Error(`Viz.register: duplicate id ${def.id}`);
-    entries.push({
+    const entry = {
       id:         def.id,
       label:      def.label || def.id,
       kind:       def.kind,
@@ -35,9 +36,11 @@
       teardownFn: def.teardownFn || null,
       controls:   Array.isArray(def.controls) ? def.controls : [],
       layout:     def.layout || null,   // 'vertical' for stacked controls
-    });
+    };
+    entries.push(entry);
+    entryById.set(entry.id, entry);
     appendButton(entries.length - 1);
-    appendControls(entries[entries.length - 1]);
+    appendControls(entry);
   }
 
   // Builds a <div class="viz-controls"> for any viz that declares `controls`.
@@ -64,6 +67,11 @@
     div.innerHTML = '';
     entry.controls.forEach(c => {
       const type = c.type || 'slider';
+      // Cache the resolved type on the control so controlValue() doesn't
+      // recompute it every frame. _input is populated below where the
+      // element is created.
+      c._type  = type;
+      c._input = null;
       if (type === 'button') {
         const btn = document.createElement('button');
         btn.className   = 'speed-label viz-ctl-button';
@@ -78,6 +86,7 @@
       label.textContent = c.label;
       const input = document.createElement('input');
       input.id = `viz-ctl-${entry.id}-${c.id}`;
+      c._input = input; // cache reference so render loop doesn't getElementById each frame
       if (type === 'text') {
         input.type = 'text';
         input.value = String(c.default ?? '');
@@ -121,24 +130,42 @@
   //   toggle  → boolean
   //   buttons → null (buttons use onClick)
   // Falls back to the declared default if the input isn't in the DOM yet.
+  //
+  // Perf: hot-path fast-track when the control has its `_input` cached by
+  // appendControls. Render loops call this 1-3× per frame per viz, so the
+  // previous getElementById + entries.find() + controls.find() combo was
+  // ~30-100µs/frame of DOM + linear scan. Cached path is ~2 field reads.
   function controlValue(vizId, controlId) {
-    const input = document.getElementById(`viz-ctl-${vizId}-${controlId}`);
-    const entry = entries.find(e => e.id === vizId);
-    const ctl   = entry && entry.controls.find(c => c.id === controlId);
-    const type  = ctl ? (ctl.type || 'slider') : 'slider';
+    const entry = entryById.get(vizId);
+    if (!entry) return 0;
+    // Scan at most entry.controls.length items (typically 1-3) — keeping
+    // a nested map per viz isn't worth the complexity at n=3.
+    let ctl = null;
+    for (let i = 0; i < entry.controls.length; i++) {
+      if (entry.controls[i].id === controlId) { ctl = entry.controls[i]; break; }
+    }
+    if (!ctl) return 0;
+    const type  = ctl._type || ctl.type || 'slider';
     if (type === 'button') return null;
+    // _input is cached at creation. Fall back to getElementById only for
+    // the first frame between register() and the DOM flush, then assign.
+    let input = ctl._input;
+    if (!input) {
+      input = document.getElementById(`viz-ctl-${vizId}-${controlId}`);
+      if (input) ctl._input = input;
+    }
     if (type === 'toggle') {
-      return input ? input.checked : !!(ctl && ctl.default);
+      return input ? input.checked : !!ctl.default;
     }
     if (type === 'text') {
-      return input ? input.value : (ctl ? (ctl.default ?? '') : '');
+      return input ? input.value : (ctl.default ?? '');
     }
     // slider + number: parse numeric value, fall back to declared default.
     if (input) {
       const v = parseFloat(input.value);
-      return isNaN(v) ? (ctl ? (ctl.default ?? 0) : 0) : v;
+      return isNaN(v) ? (ctl.default ?? 0) : v;
     }
-    return ctl ? (ctl.default ?? ctl.min) : 0;
+    return ctl.default ?? ctl.min ?? 0;
   }
 
   function appendButton(index) {
@@ -153,6 +180,7 @@
     btn.dataset.mode    = String(index);
     btn.title           = e.label;
     btn.setAttribute('aria-label', e.label);
+    btn.setAttribute('aria-pressed', index === 0 ? 'true' : 'false');
     btn.addEventListener('click', () => {
       const fn = typeof window.setMode === 'function' ? window.setMode : setMode;
       fn(index);
@@ -160,19 +188,14 @@
     row.appendChild(btn);
   }
 
-  // Title overlay fade — called on every successful mode transition.
-  // Repeated switches restart the fade cleanly without piling up timers.
-  let titleFadeTimer = null;
+  // Title chip — persistent status indicator in the top-left, set on every
+  // mode transition. Visibility is otherwise owned by app.js's screensaver
+  // / controls-hidden logic (so it fades with the other bottom-band chrome).
   function flashTitle(label) {
     const el = document.getElementById('viz-title-overlay');
     if (!el || !label) return;
     el.textContent = label;
     el.classList.add('visible');
-    if (titleFadeTimer) clearTimeout(titleFadeTimer);
-    titleFadeTimer = setTimeout(() => {
-      el.classList.remove('visible');
-      titleFadeTimer = null;
-    }, 1100);
   }
 
   // Ensure every registered viz has a button — used as a bootstrap reconciliation
@@ -205,15 +228,50 @@
     if (prev && prev !== next && prev.teardownFn) {
       try { prev.teardownFn(); } catch (e) { console.error(`[Viz] ${prev.id} teardown:`, e); }
     }
+    // Wipe both drawing surfaces on every real transition so no stale pixels
+    // from the outgoing viz bleed through before the incoming viz's first
+    // render lands. Fixes:
+    //   - 2D trail-leavers (fireworks, mandala) whose translucent-fill
+    //     accumulation persists on canvas-2d after teardown.
+    //   - Shared WebGL framebuffer retaining the last frame of the previous
+    //     webgl viz — especially visible when coming back from an
+    //     own-renderer viz (seismic) that hid the shared canvas.
+    // Only runs on prev→next transitions; re-selecting the active viz is a
+    // no-op so idle mouse flutters don't blank the screen.
+    if (prev && prev !== next) {
+      try {
+        const c2d = window.canvas2d, c2dCtx = window.ctx;
+        if (c2d && c2dCtx) {
+          // ctx has a DPR scaleup transform from resizeCanvas() in app.js.
+          // Save/reset it so we clear the physical backing store exactly
+          // once regardless of DPR, then restore for the next renderFn.
+          c2dCtx.save();
+          c2dCtx.setTransform(1, 0, 0, 1, 0, 0);
+          c2dCtx.clearRect(0, 0, c2d.width, c2d.height);
+          c2dCtx.restore();
+        }
+      } catch (e) { console.error('[Viz] canvas-2d clear:', e); }
+      try {
+        const gl = window.vizGL && window.vizGL.renderer;
+        if (gl) {
+          gl.setClearColor(0x000000, 1);
+          gl.clear();
+        }
+      } catch (e) { console.error('[Viz] webgl clear:', e); }
+    }
     if (next.initFn && !inited.has(next.id)) {
       try { next.initFn(); inited.add(next.id); }
       catch (e) { console.error(`[Viz] ${next.id} init:`, e); }
     }
 
-    // Active-button styling + mode-index cache for legacy checks.
+    // Active-button styling + aria-pressed sync + mode-index cache.
     const row = document.getElementById('mode-buttons');
     if (row) {
-      Array.from(row.children).forEach((b, i) => b.classList.toggle('active', i === index));
+      Array.from(row.children).forEach((b, i) => {
+        const isActive = i === index;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
     }
 
     // Per-viz control group visibility — only the active viz's div is shown.

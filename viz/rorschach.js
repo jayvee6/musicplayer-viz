@@ -215,6 +215,18 @@
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
   }
 
+  // Release GPU resources on mode-out. CPU smoothing state (smBass, etc.)
+  // is module-scope and safely persists; render's `if (!scene) init()`
+  // guard rebuilds the scene on re-entry.
+  function teardown() {
+    if (scene) {
+      scene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }
+    if (mat) mat.dispose();
+    mat   = null;
+    scene = null;
+  }
+
   function render(t, frame) {
     if (!scene) init();
     if (!scene) return;
@@ -259,6 +271,7 @@
     kind:     'webgl',
     initFn:   init,
     renderFn: render,
+    teardownFn: teardown,
     controls: [
       { id: 'drift', label: 'Drift', min: 0.1, max: 2.0, step: 0.05, default: 1.0 },
       { id: 'size',  label: 'Size',  min: 0.5, max: 1.5, step: 0.02, default: 1.0 },

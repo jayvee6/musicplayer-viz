@@ -146,6 +146,19 @@
     scene.add(mesh);
   }
 
+  // Release GPU resources on mode-out (playbook: don't leak scenes across
+  // 15 viz). Render's `if (!scene) init()` guard rebuilds on next entry.
+  function teardown() {
+    if (mesh) {
+      if (mesh.geometry) mesh.geometry.dispose();
+      scene && scene.remove(mesh);
+    }
+    if (mat) mat.dispose();
+    mesh = null;
+    mat  = null;
+    scene = null;
+  }
+
   function render(t, frame) {
     // Lazy bootstrap — Kaleidoscope can be the first WebGL mode activated, in
     // which case window.vizGL is still null because Blob's initThree() hasn't
@@ -192,6 +205,7 @@
     kind:   'webgl',
     initFn: init,
     renderFn: render,
+    teardownFn: teardown,
     controls: [
       { id: 'tunnel',  label: 'Tunnel',  min: 0,   max: 3.0, step: 0.05, default: 1.0 },
       { id: 'palette', label: 'Palette', min: 0,   max: 3.0, step: 0.05, default: 1.0 },

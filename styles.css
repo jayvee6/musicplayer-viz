@@ -290,6 +290,57 @@ body {
   color: #fff;
 }
 
+/* ─── Keyboard hints (bottom-center, matches sign-in + ui-buttons bottom band) */
+
+#kbd-hints {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  z-index: 200;
+  pointer-events: none;
+  user-select: none;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  transition: opacity 0.28s ease;
+  white-space: nowrap;
+}
+
+#kbd-hints span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#kbd-hints kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.05);
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* Hide on narrow viewports — bottom band gets crowded and the pill
+   itself is already stacked in the 640px media query. */
+@media (max-width: 640px) {
+  #kbd-hints { display: none; }
+}
+
 /* iPod toggle button inside controls */
 #ipod-toggle {
   background: rgba(255, 255, 255, 0.1);
@@ -887,32 +938,58 @@ body {
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.55);
 }
 
-/* ── Viz title overlay ───────────────────────────────────────
-   Large faded-in label that appears briefly when switching viz.
-   Positioned in the upper third so it doesn't collide with the
-   centered glass pill or the edge cycle buttons. */
+/* ── Viz title chip (top-left) ───────────────────────────────
+   Persistent status chip in the SF / iOS control-center visual
+   language: backdrop-blur pill, SF Pro Display semibold, mixed
+   case with slightly-negative tracking (Apple display convention).
+   Shares the bottom-band shell treatment with #sign-in-buttons,
+   #ui-buttons, and #kbd-hints — reads as a system-UI chrome layer
+   distinct from the draggable controls pill. */
 
 #viz-title-overlay {
   position: fixed;
-  top: 14%;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 42px;
-  font-weight: 300;
-  letter-spacing: 0.32em;
-  color: rgba(255, 255, 255, 0.88);
-  text-transform: uppercase;
-  text-shadow: 0 0 18px rgba(255, 255, 255, 0.25);
+  top: 20px;
+  left: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  font-family: -apple-system, "SF Pro Display", BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   user-select: none;
   opacity: 0;
-  transition: opacity 0.28s ease;
-  z-index: 150;
+  transform: translateY(-4px);
+  transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 200;
   white-space: nowrap;
+}
+
+/* A subtle leading dot matches Apple's status-chip idiom
+   (AirDrop / Now Playing / Voice Memo indicator row). */
+#viz-title-overlay::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.55);
 }
 
 #viz-title-overlay.visible {
   opacity: 1;
+  transform: translateY(0);
 }
 
 /* ─── Edge cycle buttons ─────────────────────────────────────────────── */
@@ -1109,4 +1186,122 @@ body.hidden .viz-cycle-btn { display: none; }
   color: rgba(255, 255, 255, 0.7);
   min-width: 36px;
   text-align: right;
+}
+
+/* ─── Accessibility: focus indicators ───────────────────────────────────── */
+/* Visible focus ring for every interactive element that becomes keyboard-
+   focused. :focus-visible avoids the ring on mouse clicks; it only activates
+   for keyboard / programmatic focus so the UI stays clean for pointer users. */
+
+:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+/* Mode-button dots are tiny — use a larger, rounded outline ring so it's
+   visible against any viz background. */
+.mode-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 3px;
+  border-radius: 50%;
+}
+
+/* Transport and utility buttons: subtle glow to stand out against dark canvas */
+.transport-btn:focus-visible,
+.ui-btn:focus-visible,
+.viz-cycle-btn:focus-visible,
+.stream-src-btn:focus-visible,
+.viz-source-btn:focus-visible,
+#playlist-btn:focus-visible,
+#ipod-toggle:focus-visible,
+#signin-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Viz-controls inputs */
+.viz-controls input:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 1px;
+}
+
+/* ─── Accessibility: prefers-reduced-motion ──────────────────────────────── */
+/* When the user has "Reduce Motion" enabled in their OS, suppress transitions
+   and animations that could be distracting. Viz rendering itself runs via
+   requestAnimationFrame and is not affected by CSS — those would need JS
+   guards. This covers all CSS-driven motion in the shell/UI. */
+@media (prefers-reduced-motion: reduce) {
+  /* Kill all CSS transitions in the controls shell */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration:  0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* Title overlay fade (normally 1.1 s) — show briefly then hide instantly */
+  #viz-title-overlay {
+    transition: none !important;
+  }
+
+  /* iPod overlay slide-in */
+  .ipod {
+    transition: none !important;
+  }
+
+  /* Track-name ticker scroll animation */
+  #track-name.ticker {
+    animation: none !important;
+  }
+}
+
+/* ─── Responsive: narrow viewport (≤ 640px) ─────────────────────────────── */
+/* At 600 px the controls pill's min-width: 580px would clip off-screen.
+   Drop the min-width, allow the pill to shrink, and wrap the bottom row. */
+@media (max-width: 640px) {
+  #controls {
+    min-width: 0;
+    width: calc(100vw - 24px);
+    left: 12px !important;  /* override the JS-positioned left; keep centered */
+    padding: 10px 12px;
+  }
+
+  /* Music row: stack track-details + transport + actions vertically */
+  #music-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Transport: center the buttons and let them wrap */
+  #transport {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Track details: full width */
+  #track-details {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  /* Music actions: full width, right-align */
+  #music-actions {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  /* Bottom row: stack sliders above mode dots */
+  #bottom-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #sliders-row {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
 }
