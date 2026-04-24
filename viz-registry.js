@@ -233,6 +233,37 @@
     if (prev && prev !== next && prev.teardownFn) {
       try { prev.teardownFn(); } catch (e) { console.error(`[Viz] ${prev.id} teardown:`, e); }
     }
+    // Wipe both drawing surfaces on every real transition so no stale pixels
+    // from the outgoing viz bleed through before the incoming viz's first
+    // render lands. Fixes:
+    //   - 2D trail-leavers (fireworks, mandala) whose translucent-fill
+    //     accumulation persists on canvas-2d after teardown.
+    //   - Shared WebGL framebuffer retaining the last frame of the previous
+    //     webgl viz — especially visible when coming back from an
+    //     own-renderer viz (seismic) that hid the shared canvas.
+    // Only runs on prev→next transitions; re-selecting the active viz is a
+    // no-op so idle mouse flutters don't blank the screen.
+    if (prev && prev !== next) {
+      try {
+        const c2d = window.canvas2d, c2dCtx = window.ctx;
+        if (c2d && c2dCtx) {
+          // ctx has a DPR scaleup transform from resizeCanvas() in app.js.
+          // Save/reset it so we clear the physical backing store exactly
+          // once regardless of DPR, then restore for the next renderFn.
+          c2dCtx.save();
+          c2dCtx.setTransform(1, 0, 0, 1, 0, 0);
+          c2dCtx.clearRect(0, 0, c2d.width, c2d.height);
+          c2dCtx.restore();
+        }
+      } catch (e) { console.error('[Viz] canvas-2d clear:', e); }
+      try {
+        const gl = window.vizGL && window.vizGL.renderer;
+        if (gl) {
+          gl.setClearColor(0x000000, 1);
+          gl.clear();
+        }
+      } catch (e) { console.error('[Viz] webgl clear:', e); }
+    }
     if (next.initFn && !inited.has(next.id)) {
       try { next.initFn(); inited.add(next.id); }
       catch (e) { console.error(`[Viz] ${next.id} init:`, e); }
