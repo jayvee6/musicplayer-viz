@@ -188,19 +188,14 @@
     row.appendChild(btn);
   }
 
-  // Title overlay fade — called on every successful mode transition.
-  // Repeated switches restart the fade cleanly without piling up timers.
-  let titleFadeTimer = null;
+  // Title chip — persistent status indicator in the top-left, set on every
+  // mode transition. Visibility is otherwise owned by app.js's screensaver
+  // / controls-hidden logic (so it fades with the other bottom-band chrome).
   function flashTitle(label) {
     const el = document.getElementById('viz-title-overlay');
     if (!el || !label) return;
     el.textContent = label;
     el.classList.add('visible');
-    if (titleFadeTimer) clearTimeout(titleFadeTimer);
-    titleFadeTimer = setTimeout(() => {
-      el.classList.remove('visible');
-      titleFadeTimer = null;
-    }, 1100);
   }
 
   // Ensure every registered viz has a button — used as a bootstrap reconciliation

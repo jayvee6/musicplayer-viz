@@ -938,32 +938,58 @@ body {
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.55);
 }
 
-/* ── Viz title overlay ───────────────────────────────────────
-   Large faded-in label that appears briefly when switching viz.
-   Positioned in the upper third so it doesn't collide with the
-   centered glass pill or the edge cycle buttons. */
+/* ── Viz title chip (top-left) ───────────────────────────────
+   Persistent status chip in the SF / iOS control-center visual
+   language: backdrop-blur pill, SF Pro Display semibold, mixed
+   case with slightly-negative tracking (Apple display convention).
+   Shares the bottom-band shell treatment with #sign-in-buttons,
+   #ui-buttons, and #kbd-hints — reads as a system-UI chrome layer
+   distinct from the draggable controls pill. */
 
 #viz-title-overlay {
   position: fixed;
-  top: 14%;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 42px;
-  font-weight: 300;
-  letter-spacing: 0.32em;
-  color: rgba(255, 255, 255, 0.88);
-  text-transform: uppercase;
-  text-shadow: 0 0 18px rgba(255, 255, 255, 0.25);
+  top: 20px;
+  left: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  font-family: -apple-system, "SF Pro Display", BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   user-select: none;
   opacity: 0;
-  transition: opacity 0.28s ease;
-  z-index: 150;
+  transform: translateY(-4px);
+  transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 200;
   white-space: nowrap;
+}
+
+/* A subtle leading dot matches Apple's status-chip idiom
+   (AirDrop / Now Playing / Voice Memo indicator row). */
+#viz-title-overlay::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.55);
 }
 
 #viz-title-overlay.visible {
   opacity: 1;
+  transform: translateY(0);
 }
 
 /* ─── Edge cycle buttons ─────────────────────────────────────────────── */

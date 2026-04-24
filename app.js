@@ -1981,6 +1981,7 @@ document.getElementById('btn-hide').addEventListener('click', () => {
 // clusters, so hiding them together keeps the "screensaver" read clean.
 const signInButtons = document.getElementById('sign-in-buttons');
 const kbdHints      = document.getElementById('kbd-hints');
+const titleChip     = document.getElementById('viz-title-overlay');
 function resetHideTimer() {
   uiButtons.style.opacity = '1';
   uiButtons.style.pointerEvents = 'all';
@@ -1988,7 +1989,8 @@ function resetHideTimer() {
     signInButtons.style.opacity = '1';
     signInButtons.style.pointerEvents = 'all';
   }
-  if (kbdHints) kbdHints.style.opacity = '1';
+  if (kbdHints)  kbdHints.style.opacity  = '1';
+  if (titleChip) titleChip.style.opacity = '';   // fall back to CSS (.visible controls it)
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     if (controlsHidden) {
@@ -1998,7 +2000,8 @@ function resetHideTimer() {
         signInButtons.style.opacity = '0';
         signInButtons.style.pointerEvents = 'none';
       }
-      if (kbdHints) kbdHints.style.opacity = '0';
+      if (kbdHints)  kbdHints.style.opacity  = '0';
+      if (titleChip) titleChip.style.opacity = '0';
     }
   }, 3000);
 }
